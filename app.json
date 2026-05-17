@@ -1,0 +1,52 @@
+{
+  "expo": {
+    "name": "Nomi Mobile",
+    "slug": "nomi-mobile",
+    "scheme": "nomimobile",
+    "version": "0.2.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "允许应用访问你的相册，用于选择图片进行图生图。",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "允许应用访问你的相册，用于选择图片进行图生图。",
+          "savePhotosPermission": "允许应用保存生成的图片到相册。"
+        }
+      ],
+      "expo-sqlite"
+    ],
+    "splash": {
+      "backgroundColor": "#0B1020"
+    },
+    "android": {
+      "package": "com.nomi.mobile",
+      "versionCode": 2,
+      "permissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_MEDIA_AUDIO"
+      ]
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "7f22a256-5a17-40b3-aeb9-183d650e9e8c"
+      }
+    },
+    "owner": "wanan_nya"
+  }
+}
