@@ -1,5 +1,5 @@
 ﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Animated, ImageBackground, PanResponder, Platform, SafeAreaView, StatusBar, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Animated, BackHandler, ImageBackground, PanResponder, Platform, SafeAreaView, StatusBar, StyleSheet, Text, ToastAndroid, View } from "react-native";
 
 import { HamburgerButton } from "@/components/HamburgerButton";
 import { TabSwitch } from "@/components/TabSwitch";
@@ -28,6 +28,7 @@ function MainApp() {
   const tabsAnim = useRef(new Animated.Value(0)).current;
   const menuRowAnim = useRef(new Animated.Value(1)).current;
   const modeAnim = useRef(new Animated.Value(0)).current;
+  const lastBackPressRef = useRef(0);
 
   const statusBarOffset = Platform.OS === "android" ? StatusBar.currentHeight ?? 0 : 0;
   const topBarHeight = statusBarOffset + 56;
@@ -76,6 +77,43 @@ function MainApp() {
       useNativeDriver: true,
     }).start();
   }, [mode, modeAnim]);
+
+  useEffect(() => {
+    const onBackPress = () => {
+      if (drawerOpen) {
+        setDrawerOpen(false);
+        return true;
+      }
+
+      if (page !== "home") {
+        setPage("home");
+        setMode("chat");
+        setChromeVisible(true);
+        return true;
+      }
+
+      if (mode !== "chat") {
+        setMode("chat");
+        setChromeVisible(true);
+        return true;
+      }
+
+      const now = Date.now();
+      if (now - lastBackPressRef.current < 2000) {
+        BackHandler.exitApp();
+        return true;
+      }
+
+      lastBackPressRef.current = now;
+      if (Platform.OS === "android") {
+        ToastAndroid.show("再按一次返回键退出", ToastAndroid.SHORT);
+      }
+      return true;
+    };
+
+    const subscription = BackHandler.addEventListener("hardwareBackPress", onBackPress);
+    return () => subscription.remove();
+  }, [drawerOpen, mode, page]);
 
   const swipeResponder = useMemo(
     () =>
@@ -278,7 +316,7 @@ function MainApp() {
           </Animated.View>
         </View>
       </Animated.View>
-      <View style={[styles.screenWrap, { paddingTop: topBarHeight }]} {...swipeResponder.panHandlers}>
+      <View style={[styles.screenWrap, { top: topBarHeight }]} {...swipeResponder.panHandlers}>
         {homeScreen}
         {overlayScreen}
       </View>
@@ -370,7 +408,7 @@ const styles = StyleSheet.create({
     height: 42,
   },
   screenWrap: {
-    flex: 1,
+    ...StyleSheet.absoluteFillObject,
   },
   homeStage: {
     flex: 1,

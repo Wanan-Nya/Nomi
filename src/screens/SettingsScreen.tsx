@@ -1,5 +1,5 @@
 import React, { memo, useMemo, useState } from "react";
-import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 
 import { useRelaySettings } from "@/context/RelaySettingsContext";
@@ -140,6 +140,7 @@ export function SettingsScreen({ onScrollDirection }: Props) {
   const {
     settings,
     addModelCard,
+    removeModelCard,
     updateModelCard,
     setActiveChatModelId,
     setActiveImageModelId,
@@ -164,6 +165,19 @@ export function SettingsScreen({ onScrollDirection }: Props) {
     [settings.activeImageModelId, settings.models]
   );
   const activeChat = chatModels.find((model) => model.id === settings.activeChatModelId) ?? chatModels[0] ?? settings.models[0];
+
+  function confirmDeleteModel(modelId: string, modelName: string) {
+    Alert.alert("删除模型", `确定删除「${modelName}」吗？`, [
+      { text: "取消", style: "cancel" },
+      {
+        text: "删除",
+        style: "destructive",
+        onPress: () => {
+          removeModelCard(modelId);
+        },
+      },
+    ]);
+  }
 
   function openNewChatModel() {
     setEditorMode("chat");
@@ -295,6 +309,8 @@ export function SettingsScreen({ onScrollDirection }: Props) {
               <Pressable
                 key={model.id}
                 onPress={() => openChatModel(model.id)}
+                onLongPress={() => confirmDeleteModel(model.id, model.name)}
+                delayLongPress={250}
                 style={({ pressed }) => [styles.modelCard, active && styles.modelCardActive, pressed && styles.modelCardPressed]}
               >
                 <Text style={styles.modelName}>{model.name}</Text>
@@ -314,7 +330,12 @@ export function SettingsScreen({ onScrollDirection }: Props) {
         </View>
 
         {imageModel ? (
-          <Pressable onPress={openImageModel} style={({ pressed }) => [styles.imageModelCard, pressed && styles.modelCardPressed]}>
+          <Pressable
+            onPress={openImageModel}
+            onLongPress={() => confirmDeleteModel(imageModel.id, imageModel.name)}
+            delayLongPress={250}
+            style={({ pressed }) => [styles.imageModelCard, pressed && styles.modelCardPressed]}
+          >
             <Text style={styles.modelName}>{imageModel.name}</Text>
             <Text style={styles.modelMeta}>点按查看详情</Text>
           </Pressable>
@@ -348,8 +369,8 @@ export function SettingsScreen({ onScrollDirection }: Props) {
           onChange={setChatBackgroundUri}
           onClear={clearChatBackground}
           helper="选择一张图片作为所有页面的背景。会先裁剪，再保存。"
-          aspectRatio={16 / 10}
-          cropRatio={[16, 10]}
+          aspectRatio={9 / 16}
+          cropRatio={[9, 16]}
         />
         <ImageField
           title="用户头像"
