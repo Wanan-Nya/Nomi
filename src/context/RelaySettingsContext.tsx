@@ -7,7 +7,19 @@ export type RelayConnectionSettings = {
   model: string;
 };
 
+export type RelayModelCard = {
+  id: string;
+  name: string;
+  baseUrl: string;
+  apiKey: string;
+  chatModel: string;
+  imageModel: string;
+};
+
 export type RelaySettings = {
+  models: RelayModelCard[];
+  activeChatModelId: string;
+  activeImageModelId: string;
   chat: RelayConnectionSettings;
   image: RelayConnectionSettings;
   aiName: string;
@@ -20,6 +32,11 @@ export type RelaySettings = {
 type RelaySettingsContextValue = {
   settings: RelaySettings;
   isReady: boolean;
+  addModelCard: (card?: Partial<RelayModelCard>) => string;
+  updateModelCard: (id: string, patch: Partial<RelayModelCard>) => void;
+  removeModelCard: (id: string) => void;
+  setActiveChatModelId: (id: string) => void;
+  setActiveImageModelId: (id: string) => void;
   setChatBaseUrl: (value: string) => void;
   setChatApiKey: (value: string) => void;
   setChatModel: (value: string) => void;
@@ -33,49 +50,160 @@ type RelaySettingsContextValue = {
   setAiAvatarUri: (value: string) => void;
 };
 
-const STORAGE_KEY = "@nomi-mobile/relay-settings-v2";
+const STORAGE_KEY = "@nomi-mobile/relay-settings-v3";
 
-const defaultSettings: RelaySettings = {
-  chat: {
-    baseUrl: process.env.EXPO_PUBLIC_CHAT_API_BASE_URL?.trim() || process.env.EXPO_PUBLIC_API_BASE_URL?.trim() || "",
-    apiKey: process.env.EXPO_PUBLIC_CHAT_API_KEY?.trim() || process.env.EXPO_PUBLIC_API_KEY?.trim() || "",
-    model: process.env.EXPO_PUBLIC_CHAT_MODEL?.trim() || "gpt-4o-mini",
-  },
-  image: {
-    baseUrl: process.env.EXPO_PUBLIC_IMAGE_API_BASE_URL?.trim() || process.env.EXPO_PUBLIC_API_BASE_URL?.trim() || "",
-    apiKey: process.env.EXPO_PUBLIC_IMAGE_API_KEY?.trim() || process.env.EXPO_PUBLIC_API_KEY?.trim() || "",
-    model: process.env.EXPO_PUBLIC_IMAGE_MODEL?.trim() || "gpt-image-2",
-  },
-  aiName: process.env.EXPO_PUBLIC_AI_NAME?.trim() || "小诺",
-  persona:
-    process.env.EXPO_PUBLIC_AI_PERSONA?.trim() ||
-    "一个耐心、清晰、说中文的 AI 助手。回答尽量简洁，必要时分步骤说明。",
-  chatBackgroundUri: "",
-  userAvatarUri: "",
-  aiAvatarUri: "",
-};
+function trim(value?: string | null) {
+  return value?.trim() ?? "";
+}
 
-function mergeSettings(partial?: Partial<RelaySettings> | null): RelaySettings {
+function makeId(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function createDefaultCard(kind: "chat" | "image"): RelayModelCard {
+  const baseUrl = trim(kind === "chat" ? process.env.EXPO_PUBLIC_CHAT_API_BASE_URL : process.env.EXPO_PUBLIC_IMAGE_API_BASE_URL) ||
+    trim(process.env.EXPO_PUBLIC_API_BASE_URL);
+  const apiKey = trim(kind === "chat" ? process.env.EXPO_PUBLIC_CHAT_API_KEY : process.env.EXPO_PUBLIC_IMAGE_API_KEY) ||
+    trim(process.env.EXPO_PUBLIC_API_KEY);
+  const model = trim(kind === "chat" ? process.env.EXPO_PUBLIC_CHAT_MODEL : process.env.EXPO_PUBLIC_IMAGE_MODEL) ||
+    (kind === "chat" ? "gpt-4o-mini" : "gpt-image-2");
+
+  return {
+    id: `${kind}-default`,
+    name: kind === "chat" ? "默认聊天模型" : "默认作图模型",
+    baseUrl,
+    apiKey,
+    chatModel: kind === "chat" ? model : "gpt-4o-mini",
+    imageModel: kind === "image" ? model : "gpt-image-2",
+  };
+}
+
+function createDefaultSettings(): RelaySettings {
+  const chatCard = createDefaultCard("chat");
+  const imageCard = createDefaultCard("image");
+
+  return {
+    models: [chatCard, imageCard],
+    activeChatModelId: chatCard.id,
+    activeImageModelId: imageCard.id,
+    chat: {
+      baseUrl: chatCard.baseUrl,
+      apiKey: chatCard.apiKey,
+      model: chatCard.chatModel,
+    },
+    image: {
+      baseUrl: imageCard.baseUrl,
+      apiKey: imageCard.apiKey,
+      model: imageCard.imageModel,
+    },
+    aiName: trim(process.env.EXPO_PUBLIC_AI_NAME) || "小诺",
+    persona:
+      trim(process.env.EXPO_PUBLIC_AI_PERSONA) ||
+      "一个耐心、清晰、说中文的 AI 助手。回答尽量简洁，必要时分步骤说明。",
+    chatBackgroundUri: "",
+    userAvatarUri: "",
+    aiAvatarUri: "",
+  };
+}
+
+const defaultSettings = createDefaultSettings();
+
+function normalizeCard(card: Partial<RelayModelCard>, fallbackName: string, fallbackId?: string): RelayModelCard {
+  return {
+    id: trim(card.id) || fallbackId || makeId("model"),
+    name: trim(card.name) || fallbackName,
+    baseUrl: trim(card.baseUrl),
+    apiKey: trim(card.apiKey),
+    chatModel: trim(card.chatModel) || "gpt-4o-mini",
+    imageModel: trim(card.imageModel) || "gpt-image-2",
+  };
+}
+
+function isRelayModelCard(value: unknown): value is Partial<RelayModelCard> {
+  return Boolean(value && typeof value === "object");
+}
+
+function resolveConnection(card: RelayModelCard | undefined, kind: "chat" | "image"): RelayConnectionSettings {
+  if (!card) {
+    return {
+      baseUrl: "",
+      apiKey: "",
+      model: kind === "chat" ? "gpt-4o-mini" : "gpt-image-2",
+    };
+  }
+
+  return {
+    baseUrl: card.baseUrl.trim(),
+    apiKey: card.apiKey.trim(),
+    model: kind === "chat" ? card.chatModel.trim() || card.imageModel.trim() || "gpt-4o-mini" : card.imageModel.trim() || card.chatModel.trim() || "gpt-image-2",
+  };
+}
+
+function normalizeSettings(partial?: Partial<RelaySettings> | null): RelaySettings {
   if (!partial) {
     return defaultSettings;
   }
 
+  const legacyChat = partial.chat ? normalizeCard(
+    {
+      id: "chat-legacy",
+      name: "聊天模型",
+      baseUrl: partial.chat.baseUrl,
+      apiKey: partial.chat.apiKey,
+      chatModel: partial.chat.model,
+      imageModel: partial.chat.model,
+    },
+    "聊天模型",
+    "chat-legacy"
+  ) : null;
+  const legacyImage = partial.image ? normalizeCard(
+    {
+      id: "image-legacy",
+      name: "作图模型",
+      baseUrl: partial.image.baseUrl,
+      apiKey: partial.image.apiKey,
+      chatModel: partial.image.model,
+      imageModel: partial.image.model,
+    },
+    "作图模型",
+    "image-legacy"
+  ) : null;
+
+  const modelSource = (Array.isArray(partial.models) && partial.models.length > 0 ? partial.models : [legacyChat, legacyImage]) as Array<
+    Partial<RelayModelCard> | null
+  >;
+  const normalizedModels = modelSource.flatMap((card, index) => (card ? [normalizeCard(card, `模型 ${index + 1}`)] : []))
+    .reduce<RelayModelCard[]>((acc, card) => {
+      const existingIndex = acc.findIndex((item) => item.id === card.id);
+      if (existingIndex >= 0) {
+        acc[existingIndex] = card;
+      } else {
+        acc.push(card);
+      }
+      return acc;
+    }, []);
+
+  if (!normalizedModels.length) {
+    normalizedModels.push(createDefaultCard("chat"), createDefaultCard("image"));
+  }
+
+  const activeChatModelId = trim(partial.activeChatModelId) || normalizedModels[0].id;
+  const activeImageModelId = trim(partial.activeImageModelId) || normalizedModels.find((item) => item.id === activeChatModelId)?.id || normalizedModels[1]?.id || normalizedModels[0].id;
+
+  const chatCard = normalizedModels.find((item) => item.id === activeChatModelId) ?? normalizedModels[0];
+  const imageCard = normalizedModels.find((item) => item.id === activeImageModelId) ?? chatCard;
+
   return {
-    chat: {
-      baseUrl: partial.chat?.baseUrl?.trim() || defaultSettings.chat.baseUrl,
-      apiKey: partial.chat?.apiKey?.trim() || defaultSettings.chat.apiKey,
-      model: partial.chat?.model?.trim() || defaultSettings.chat.model,
-    },
-    image: {
-      baseUrl: partial.image?.baseUrl?.trim() || defaultSettings.image.baseUrl,
-      apiKey: partial.image?.apiKey?.trim() || defaultSettings.image.apiKey,
-      model: partial.image?.model?.trim() || defaultSettings.image.model,
-    },
-    aiName: partial.aiName?.trim() || defaultSettings.aiName,
-    persona: partial.persona?.trim() || defaultSettings.persona,
-    chatBackgroundUri: partial.chatBackgroundUri?.trim() || "",
-    userAvatarUri: partial.userAvatarUri?.trim() || "",
-    aiAvatarUri: partial.aiAvatarUri?.trim() || "",
+    models: normalizedModels,
+    activeChatModelId: chatCard.id,
+    activeImageModelId: imageCard.id,
+    chat: resolveConnection(chatCard, "chat"),
+    image: resolveConnection(imageCard, "image"),
+    aiName: trim(partial.aiName) || defaultSettings.aiName,
+    persona: trim(partial.persona) || defaultSettings.persona,
+    chatBackgroundUri: trim(partial.chatBackgroundUri),
+    userAvatarUri: trim(partial.userAvatarUri),
+    aiAvatarUri: trim(partial.aiAvatarUri),
   };
 }
 
@@ -107,7 +235,7 @@ export function RelaySettingsProvider({ children }: { children: React.ReactNode 
           return;
         }
 
-        setSettings(mergeSettings(safeParseSettings(raw)));
+        setSettings(normalizeSettings(safeParseSettings(raw)));
       } catch {
         if (!cancelled) {
           setSettings(defaultSettings);
@@ -126,37 +254,168 @@ export function RelaySettingsProvider({ children }: { children: React.ReactNode 
     };
   }, []);
 
-  const updateConnectionSetting = useCallback(
-    (section: "chat" | "image", key: keyof RelayConnectionSettings, value: string) => {
-      setSettings((current) => ({
-        ...current,
-        [section]: {
-          ...current[section],
-          [key]: value.trim(),
-        },
-      }));
-    },
-    []
-  );
-
-  const updateSetting = useCallback(<K extends keyof RelaySettings>(key: K, value: RelaySettings[K]) => {
-    setSettings((current) => ({
-      ...current,
-      [key]: typeof value === "string" ? value.trim() : value,
-    }));
+  const commit = useCallback((updater: (current: RelaySettings) => RelaySettings) => {
+    setSettings((current) => normalizeSettings(updater(current)));
   }, []);
 
-  const setChatBaseUrl = useCallback((baseUrl: string) => updateConnectionSetting("chat", "baseUrl", baseUrl), [updateConnectionSetting]);
-  const setChatApiKey = useCallback((apiKey: string) => updateConnectionSetting("chat", "apiKey", apiKey), [updateConnectionSetting]);
-  const setChatModel = useCallback((model: string) => updateConnectionSetting("chat", "model", model), [updateConnectionSetting]);
-  const setImageBaseUrl = useCallback((baseUrl: string) => updateConnectionSetting("image", "baseUrl", baseUrl), [updateConnectionSetting]);
-  const setImageApiKey = useCallback((apiKey: string) => updateConnectionSetting("image", "apiKey", apiKey), [updateConnectionSetting]);
-  const setImageModel = useCallback((model: string) => updateConnectionSetting("image", "model", model), [updateConnectionSetting]);
-  const setAiName = useCallback((aiName: string) => updateSetting("aiName", aiName), [updateSetting]);
-  const setPersona = useCallback((persona: string) => updateSetting("persona", persona), [updateSetting]);
-  const setChatBackgroundUri = useCallback((chatBackgroundUri: string) => updateSetting("chatBackgroundUri", chatBackgroundUri), [updateSetting]);
-  const setUserAvatarUri = useCallback((userAvatarUri: string) => updateSetting("userAvatarUri", userAvatarUri), [updateSetting]);
-  const setAiAvatarUri = useCallback((aiAvatarUri: string) => updateSetting("aiAvatarUri", aiAvatarUri), [updateSetting]);
+  const addModelCard = useCallback(
+    (card?: Partial<RelayModelCard>) => {
+      const id = trim(card?.id) || makeId("model");
+      commit((current) => ({
+        ...current,
+        models: [
+          ...current.models,
+          normalizeCard(
+            {
+              id,
+              name: card?.name,
+              baseUrl: card?.baseUrl,
+              apiKey: card?.apiKey,
+              chatModel: card?.chatModel,
+              imageModel: card?.imageModel,
+            },
+            `模型 ${current.models.length + 1}`,
+            id
+          ),
+        ],
+      }));
+
+      return id;
+    },
+    [commit]
+  );
+
+  const updateModelCard = useCallback(
+    (id: string, patch: Partial<RelayModelCard>) => {
+      commit((current) => ({
+        ...current,
+        models: current.models.map((card) =>
+          card.id === id
+            ? normalizeCard(
+                {
+                  ...card,
+                  ...patch,
+                  id,
+                },
+                card.name || "模型",
+                id
+              )
+            : card
+        ),
+      }));
+    },
+    [commit]
+  );
+
+  const removeModelCard = useCallback(
+    (id: string) => {
+      commit((current) => {
+        const models = current.models.filter((card) => card.id !== id);
+        const nextModels = models.length > 0 ? models : [createDefaultCard("chat")];
+        const nextChat = current.activeChatModelId === id ? nextModels[0].id : current.activeChatModelId;
+        const nextImage = current.activeImageModelId === id ? nextModels[Math.min(1, nextModels.length - 1)]?.id ?? nextModels[0].id : current.activeImageModelId;
+
+        return {
+          ...current,
+          models: nextModels,
+          activeChatModelId: nextChat,
+          activeImageModelId: nextImage,
+        };
+      });
+    },
+    [commit]
+  );
+
+  const setActiveChatModelId = useCallback(
+    (id: string) => {
+      commit((current) => ({
+        ...current,
+        activeChatModelId: current.models.some((card) => card.id === id) ? id : current.activeChatModelId,
+      }));
+    },
+    [commit]
+  );
+
+  const setActiveImageModelId = useCallback(
+    (id: string) => {
+      commit((current) => ({
+        ...current,
+        activeImageModelId: current.models.some((card) => card.id === id) ? id : current.activeImageModelId,
+      }));
+    },
+    [commit]
+  );
+
+  const updateActiveChatCard = useCallback(
+    (patch: Partial<RelayModelCard>) => {
+      commit((current) => ({
+        ...current,
+        models: current.models.map((card) =>
+          card.id === current.activeChatModelId
+            ? normalizeCard(
+                {
+                  ...card,
+                  ...patch,
+                  id: card.id,
+                },
+                card.name,
+                card.id
+              )
+            : card
+        ),
+      }));
+    },
+    [commit]
+  );
+
+  const updateActiveImageCard = useCallback(
+    (patch: Partial<RelayModelCard>) => {
+      commit((current) => ({
+        ...current,
+        models: current.models.map((card) =>
+          card.id === current.activeImageModelId
+            ? normalizeCard(
+                {
+                  ...card,
+                  ...patch,
+                  id: card.id,
+                },
+                card.name,
+                card.id
+              )
+            : card
+        ),
+      }));
+    },
+    [commit]
+  );
+
+  const setAiName = useCallback((value: string) => {
+    commit((current) => ({ ...current, aiName: trim(value) || defaultSettings.aiName }));
+  }, [commit]);
+
+  const setPersona = useCallback((value: string) => {
+    commit((current) => ({ ...current, persona: trim(value) || defaultSettings.persona }));
+  }, [commit]);
+
+  const setChatBackgroundUri = useCallback((value: string) => {
+    commit((current) => ({ ...current, chatBackgroundUri: trim(value) }));
+  }, [commit]);
+
+  const setUserAvatarUri = useCallback((value: string) => {
+    commit((current) => ({ ...current, userAvatarUri: trim(value) }));
+  }, [commit]);
+
+  const setAiAvatarUri = useCallback((value: string) => {
+    commit((current) => ({ ...current, aiAvatarUri: trim(value) }));
+  }, [commit]);
+
+  const setChatBaseUrl = useCallback((value: string) => updateActiveChatCard({ baseUrl: value }), [updateActiveChatCard]);
+  const setChatApiKey = useCallback((value: string) => updateActiveChatCard({ apiKey: value }), [updateActiveChatCard]);
+  const setChatModel = useCallback((value: string) => updateActiveChatCard({ chatModel: value }), [updateActiveChatCard]);
+  const setImageBaseUrl = useCallback((value: string) => updateActiveImageCard({ baseUrl: value }), [updateActiveImageCard]);
+  const setImageApiKey = useCallback((value: string) => updateActiveImageCard({ apiKey: value }), [updateActiveImageCard]);
+  const setImageModel = useCallback((value: string) => updateActiveImageCard({ imageModel: value }), [updateActiveImageCard]);
 
   useEffect(() => {
     if (!isReady) {
@@ -172,6 +431,11 @@ export function RelaySettingsProvider({ children }: { children: React.ReactNode 
     () => ({
       settings,
       isReady,
+      addModelCard,
+      updateModelCard,
+      removeModelCard,
+      setActiveChatModelId,
+      setActiveImageModelId,
       setChatBaseUrl,
       setChatApiKey,
       setChatModel,
@@ -185,19 +449,24 @@ export function RelaySettingsProvider({ children }: { children: React.ReactNode 
       setAiAvatarUri,
     }),
     [
+      addModelCard,
       isReady,
-      settings,
-      setChatBaseUrl,
-      setChatApiKey,
-      setChatModel,
-      setImageBaseUrl,
-      setImageApiKey,
-      setImageModel,
-      setAiName,
-      setPersona,
-      setChatBackgroundUri,
-      setUserAvatarUri,
+      removeModelCard,
+      setActiveChatModelId,
+      setActiveImageModelId,
       setAiAvatarUri,
+      setAiName,
+      setChatApiKey,
+      setChatBackgroundUri,
+      setChatBaseUrl,
+      setChatModel,
+      setImageApiKey,
+      setImageBaseUrl,
+      setImageModel,
+      setPersona,
+      setUserAvatarUri,
+      settings,
+      updateModelCard,
     ]
   );
 

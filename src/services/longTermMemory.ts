@@ -124,6 +124,60 @@ function clampImportance(value: number) {
   return Math.max(1, Math.min(5, Math.round(value || 3)));
 }
 
+function normalizeMemoryContent(value: string) {
+  return value
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/[。！？!?；;，,]+$/g, "");
+}
+
+function isEphemeralMemoryContent(content: string) {
+  const normalized = normalizeMemoryContent(content);
+  if (normalized.length < 4 || normalized.length > 120) {
+    return true;
+  }
+
+  const patterns = [
+    /https?:\/\//i,
+    /www\./i,
+    /@[a-z0-9._-]+\.[a-z]{2,}/i,
+    /\b\d{6,}\b/,
+    /\b\d{3,4}[-\s]?\d{3,4}[-\s]?\d{3,4}\b/,
+    /\b\d{1,2}:\d{2}\b/,
+    /(?:今天|明天|后天|昨天|刚刚|现在|今晚|本周|下周|本月|临时|暂时)/,
+    /(?:待办|todo|任务|事项|提醒|日程|清单)/i,
+  ];
+
+  return patterns.some((pattern) => pattern.test(normalized));
+}
+
+function dedupeMemoryItems(items: MemoryDraft[]) {
+  const seen = new Set<string>();
+  const result: MemoryDraft[] = [];
+
+  for (const item of items) {
+    const content = normalizeMemoryContent(item.content);
+    if (!content || isEphemeralMemoryContent(content)) {
+      continue;
+    }
+
+    const fingerprint = makeFingerprint(item.kind, content);
+    if (seen.has(fingerprint)) {
+      continue;
+    }
+
+    seen.add(fingerprint);
+    result.push({
+      ...item,
+      content,
+      importance: clampImportance(item.importance),
+      tags: item.tags.slice(0, 4),
+    });
+  }
+
+  return result;
+}
+
 function buildMemoryStats(items: MemoryItem[]) {
   const byKind: Record<MemoryKind, number> = {
     preference: 0,
@@ -404,7 +458,21 @@ async function searchRelevantMemories(query: string, limit = 5) {
 function buildConversationWindow(messages: ChatMessage[], maxLines = 8) {
   return messages
     .filter((message) => message.role !== "system")
-    .map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content.trim()}`)
+    .map((message) => {
+      const attachmentText = message.attachments?.length
+        ? `\n${message.attachments
+            .map((attachment) => {
+              if (attachment.kind === "image") {
+                return `[图片] ${attachment.name}`;
+              }
+
+              return attachment.text?.trim() ? `[文件] ${attachment.name}\n${attachment.text.trim()}` : `[文件] ${attachment.name}`;
+            })
+            .join("\n")}`
+        : "";
+
+      return `${message.role === "user" ? "User" : "Assistant"}: ${message.content.trim()}${attachmentText}`;
+    })
     .filter((line) => line.trim().length > 0)
     .slice(-maxLines)
     .join("\n");
@@ -518,13 +586,14 @@ async function extractMemoryCandidates(
   const parsed = safeParseJson<{ items?: ExtractedMemoryItem[] }>(content);
   const items = parsed?.items ?? [];
 
-  return items
+  return dedupeMemoryItems(
+    items
     .filter((item): item is Required<Pick<ExtractedMemoryItem, "kind" | "content">> & ExtractedMemoryItem => {
       return Boolean(item.kind && item.content && item.content.trim().length >= 4);
     })
     .map((item) => ({
       kind: item.kind!,
-      content: shortenText(item.content!, 180),
+      content: shortenText(normalizeMemoryContent(item.content!), 180),
       importance: Math.max(1, Math.min(5, Math.round(item.importance || 3))),
       tags: Array.isArray(item.tags)
         ? item.tags.filter((tag): tag is string => typeof tag === "string").slice(0, 6)
@@ -532,7 +601,8 @@ async function extractMemoryCandidates(
       source: "conversation",
       createdAt: now(),
       updatedAt: now(),
-    }));
+    }))
+  );
 }
 
 export async function getMemoryContext(query: string) {

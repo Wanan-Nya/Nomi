@@ -1,4 +1,4 @@
-import React, { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+﻿import React, { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Animated,
@@ -48,6 +48,7 @@ type Section = {
 
 type Props = {
   onClose: () => void;
+  onScrollDirection?: (direction: "up" | "down") => void;
 };
 
 const kindOptions: Array<{ value: MemoryKind; label: string }> = [
@@ -232,7 +233,7 @@ const DraftFields = memo(function DraftFields({
   );
 });
 
-export function MemoryScreen({ onClose }: Props) {
+export function MemoryScreen({ onClose, onScrollDirection }: Props) {
   const [items, setItems] = useState<MemoryItem[]>([]);
   const [summary, setSummary] = useState("");
   const [query, setQuery] = useState("");
@@ -247,9 +248,15 @@ export function MemoryScreen({ onClose }: Props) {
   const [editDraft, setEditDraft] = useState<MemoryDraftState>(emptyDraft);
   const [detailItem, setDetailItem] = useState<MemoryItem | null>(null);
   const [detailMounted, setDetailMounted] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedFingerprints, setSelectedFingerprints] = useState<string[]>([]);
+  const [bulkMounted, setBulkMounted] = useState(false);
   const detailBackdrop = useRef(new Animated.Value(0)).current;
   const detailSheet = useRef(new Animated.Value(0)).current;
+  const bulkBackdrop = useRef(new Animated.Value(0)).current;
+  const bulkSheet = useRef(new Animated.Value(0)).current;
   const deferredQuery = useDeferredValue(query);
+  const scrollY = useRef(0);
 
   async function loadData(mode: "initial" | "refresh" | "silent" = "silent") {
     setError("");
@@ -322,6 +329,51 @@ export function MemoryScreen({ onClose }: Props) {
       }
     });
   }, [detailBackdrop, detailItem, detailMounted, detailSheet]);
+
+  useEffect(() => {
+    if (selectionMode && selectedFingerprints.length) {
+      setBulkMounted(true);
+      bulkBackdrop.setValue(0);
+      bulkSheet.setValue(0);
+
+      Animated.parallel([
+        Animated.timing(bulkBackdrop, {
+          toValue: 1,
+          duration: 160,
+          useNativeDriver: true,
+        }),
+        Animated.spring(bulkSheet, {
+          toValue: 1,
+          useNativeDriver: true,
+          friction: 10,
+          tension: 86,
+        }),
+      ]).start();
+      return;
+    }
+
+    if (!bulkMounted) {
+      return;
+    }
+
+    Animated.parallel([
+      Animated.timing(bulkBackdrop, {
+        toValue: 0,
+        duration: 120,
+        useNativeDriver: true,
+      }),
+      Animated.timing(bulkSheet, {
+        toValue: 0,
+        duration: 140,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start(({ finished }) => {
+      if (finished) {
+        setBulkMounted(false);
+      }
+    });
+  }, [bulkBackdrop, bulkMounted, bulkSheet, selectedFingerprints.length, selectionMode]);
 
   const filteredItems = useMemo(() => {
     const normalizedQuery = normalizeText(deferredQuery);
@@ -441,6 +493,90 @@ export function MemoryScreen({ onClose }: Props) {
 
   function closeDetail() {
     setDetailItem(null);
+  }
+
+  function resetSelectionMode() {
+    setSelectionMode(false);
+    setSelectedFingerprints([]);
+  }
+
+  function toggleSelection(fingerprint: string) {
+    setSelectedFingerprints((current) =>
+      current.includes(fingerprint) ? current.filter((item) => item !== fingerprint) : [...current, fingerprint]
+    );
+  }
+
+  function startBulkSelection(item: MemoryItem) {
+    setSelectionMode(true);
+    setSelectedFingerprints((current) => (current.includes(item.fingerprint) ? current : [...current, item.fingerprint]));
+  }
+
+  async function handleBulkPromote() {
+    if (!selectedFingerprints.length || busy) {
+      return;
+    }
+
+    setBusy(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const targetItems = items.filter((item) => selectedFingerprints.includes(item.fingerprint));
+      for (const item of targetItems) {
+        await updateMemoryItem(item, {
+          kind: item.kind,
+          content: item.content,
+          importance: 5,
+          tags: item.tags,
+          source: item.source,
+        });
+      }
+
+      resetSelectionMode();
+      await loadData("silent");
+      setNotice(`已置顶 ${targetItems.length} 条记忆`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "批量置顶失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleBulkDelete() {
+    if (!selectedFingerprints.length || busy) {
+      return;
+    }
+
+    Alert.alert("批量删除", `确定删除选中的 ${selectedFingerprints.length} 条记忆吗？`, [
+      { text: "取消", style: "cancel" },
+      {
+        text: "删除",
+        style: "destructive",
+        onPress: () => {
+          void (async () => {
+            setBusy(true);
+            setError("");
+            setNotice("");
+
+            try {
+              for (const fingerprint of selectedFingerprints) {
+                await deleteMemoryItem(fingerprint);
+              }
+
+              resetSelectionMode();
+              closeDetail();
+              closeEdit();
+              await loadData("silent");
+              setNotice(`已删除 ${selectedFingerprints.length} 条记忆`);
+            } catch (err) {
+              setError(err instanceof Error ? err.message : "批量删除失败");
+            } finally {
+              setBusy(false);
+            }
+          })();
+        },
+      },
+    ]);
   }
 
   async function handleCreate() {
@@ -637,18 +773,17 @@ export function MemoryScreen({ onClose }: Props) {
         contentContainerStyle={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void loadData("refresh")} tintColor="#FFFFFF" />}
         showsVerticalScrollIndicator={false}
+        onScroll={(event) => {
+          const y = event.nativeEvent.contentOffset.y;
+          const delta = y - scrollY.current;
+          if (Math.abs(delta) > 12) {
+            onScrollDirection?.(delta > 0 ? "up" : "down");
+          }
+          scrollY.current = y;
+        }}
+        scrollEventThrottle={16}
       >
-        <View style={styles.headerCard}>
-          <View>
-            <Text style={styles.pageTitle}>记忆管理</Text>
-            <Text style={styles.pageSubtitle}>查看、搜索、编辑和导出聊天过程中沉淀下来的长期记忆。</Text>
-          </View>
-          <Pressable onPress={onClose} style={styles.closeButton}>
-            <Text style={styles.closeButtonText}>返回</Text>
-          </Pressable>
-        </View>
-
-        <View style={styles.heroCard}>
+      <View style={styles.heroCard}>
           <Text style={styles.title}>长期记忆</Text>
           <Text style={styles.subtitle}>管理聊天自动保存的偏好、资料、项目和事实。</Text>
 
@@ -729,6 +864,15 @@ export function MemoryScreen({ onClose }: Props) {
           <PrimaryButton title="清空全部" onPress={() => void handleClearAll()} loading={busy} style={[styles.actionButton, styles.dangerButton]} />
         </View>
 
+        {selectionMode ? (
+          <View style={styles.selectionBanner}>
+            <Text style={styles.selectionBannerText}>已选择 {selectedFingerprints.length} 条，长按更多条目继续多选。</Text>
+            <Pressable onPress={resetSelectionMode} style={styles.selectionBannerButton}>
+              <Text style={styles.selectionBannerButtonText}>取消选择</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>记忆列表</Text>
           <Text style={styles.helper}>
@@ -754,13 +898,29 @@ export function MemoryScreen({ onClose }: Props) {
                   <View style={styles.list}>
                     {section.items.map((item) => {
                       const palette = kindPalette(item.kind);
+                      const selected = selectedFingerprints.includes(item.fingerprint);
                       return (
-                        <Pressable key={item.fingerprint} onPress={() => openDetail(item)} style={styles.itemCard}>
+                        <Pressable
+                          key={item.fingerprint}
+                          onPress={() => {
+                            if (selectionMode) {
+                              toggleSelection(item.fingerprint);
+                              return;
+                            }
+
+                            openDetail(item);
+                          }}
+                          onLongPress={() => startBulkSelection(item)}
+                          style={[styles.itemCard, selected && styles.itemCardSelected]}
+                        >
                           <View style={styles.itemHeader}>
                             <View style={[styles.kindBadge, { backgroundColor: palette.badge, borderColor: palette.border }]}>
                               <Text style={[styles.kindBadgeText, { color: palette.text }]}>{kindLabel(item.kind)}</Text>
                             </View>
-                            <Text style={styles.timeText}>{formatTime(item.updatedAt)}</Text>
+                            <View style={styles.itemHeaderRight}>
+                              {selected ? <Text style={styles.selectedMark}>已选</Text> : null}
+                              <Text style={styles.timeText}>{formatTime(item.updatedAt)}</Text>
+                            </View>
                           </View>
 
                           <Text style={styles.itemContent}>{item.content}</Text>
@@ -879,6 +1039,46 @@ export function MemoryScreen({ onClose }: Props) {
           </Animated.View>
         </View>
       ) : null}
+
+      {bulkMounted ? (
+        <View style={styles.bulkOverlay} pointerEvents="box-none">
+          <Animated.View
+            style={[
+              styles.bulkSheet,
+              {
+                transform: [
+                  {
+                    translateY: bulkSheet.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [420, 0],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
+            <View style={styles.sheetHandle} />
+            <Text style={styles.bulkTitle}>批量编辑记忆</Text>
+            <Text style={styles.bulkSubtitle}>已选择 {selectedFingerprints.length} 条记忆。</Text>
+
+            <View style={styles.bulkActions}>
+              <PrimaryButton title="批量置顶" onPress={() => void handleBulkPromote()} loading={busy} style={styles.sheetButton} />
+              <PrimaryButton
+                title="批量删除"
+                onPress={() => void handleBulkDelete()}
+                loading={busy}
+                style={[styles.sheetButton, styles.sheetDangerButton]}
+              />
+            </View>
+
+            <View style={styles.bulkActions}>
+              <Pressable onPress={resetSelectionMode} style={styles.bulkGhostButton}>
+                <Text style={styles.bulkGhostButtonText}>退出多选</Text>
+              </Pressable>
+            </View>
+          </Animated.View>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -897,47 +1097,9 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: 16,
-    paddingTop: 56,
-    paddingBottom: 28,
+    paddingTop: 12,
+    paddingBottom: 140,
     gap: 12,
-  },
-  headerCard: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 12,
-    padding: 16,
-    borderRadius: 24,
-    backgroundColor: "rgba(255,255,255,0.06)",
-    borderWidth: 1,
-    borderColor: "rgba(146, 171, 255, 0.14)",
-  },
-  pageTitle: {
-    color: "#F5F7FF",
-    fontSize: 24,
-    fontWeight: "900",
-  },
-  pageSubtitle: {
-    marginTop: 4,
-    color: "#A7B6D8",
-    fontSize: 13,
-    lineHeight: 19,
-    maxWidth: 240,
-  },
-  closeButton: {
-    minHeight: 40,
-    paddingHorizontal: 14,
-    borderRadius: 999,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.08)",
-    borderWidth: 1,
-    borderColor: "rgba(146, 171, 255, 0.12)",
-  },
-  closeButtonText: {
-    color: "#DCE6FF",
-    fontSize: 13,
-    fontWeight: "800",
   },
   heroCard: {
     gap: 12,
@@ -1127,11 +1289,20 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.06)",
   },
+  itemCardSelected: {
+    borderColor: "rgba(94,133,255,0.72)",
+    backgroundColor: "rgba(94,133,255,0.16)",
+  },
   itemHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 10,
+  },
+  itemHeaderRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
   },
   kindBadge: {
     paddingHorizontal: 10,
@@ -1146,6 +1317,11 @@ const styles = StyleSheet.create({
   timeText: {
     color: "#8FA0C4",
     fontSize: 11,
+  },
+  selectedMark: {
+    color: "#9CB8FF",
+    fontSize: 11,
+    fontWeight: "800",
   },
   itemContent: {
     color: "#F7FAFF",
@@ -1205,6 +1381,36 @@ const styles = StyleSheet.create({
     color: "#B9F6CE",
     fontSize: 13,
     lineHeight: 18,
+  },
+  selectionBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    padding: 12,
+    borderRadius: 16,
+    backgroundColor: "rgba(94,133,255,0.14)",
+    borderWidth: 1,
+    borderColor: "rgba(94,133,255,0.28)",
+  },
+  selectionBannerText: {
+    flex: 1,
+    color: "#DCE6FF",
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  selectionBannerButton: {
+    minHeight: 34,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
+  selectionBannerButtonText: {
+    color: "#F7FAFF",
+    fontSize: 11,
+    fontWeight: "800",
   },
   detailOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -1289,6 +1495,57 @@ const styles = StyleSheet.create({
     borderColor: "rgba(146, 171, 255, 0.12)",
   },
   sheetGhostButtonText: {
+    color: "#DCE6FF",
+    fontSize: 15,
+    fontWeight: "800",
+  },
+  bulkOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 90,
+    justifyContent: "flex-end",
+  },
+  bulkBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "transparent",
+  },
+  bulkSheet: {
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 22,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    backgroundColor: "#0E1730",
+    borderTopWidth: 1,
+    borderColor: "rgba(146, 171, 255, 0.12)",
+  },
+  bulkTitle: {
+    color: "#F7FAFF",
+    fontSize: 18,
+    fontWeight: "900",
+    marginTop: 4,
+  },
+  bulkSubtitle: {
+    color: "#8FA0C4",
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 6,
+  },
+  bulkActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 14,
+  },
+  bulkGhostButton: {
+    flex: 1,
+    minHeight: 48,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 16,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(146, 171, 255, 0.12)",
+  },
+  bulkGhostButtonText: {
     color: "#DCE6FF",
     fontSize: 15,
     fontWeight: "800",

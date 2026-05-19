@@ -1,4 +1,4 @@
-import React from "react";
+﻿import React from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 
 type Props = {
@@ -17,8 +17,8 @@ export function HamburgerButton({ onPress }: Props) {
 
 const styles = StyleSheet.create({
   button: {
-    width: 44,
-    height: 44,
+    width: 46,
+    height: 46,
     borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
@@ -28,7 +28,7 @@ const styles = StyleSheet.create({
     gap: 3,
   },
   line: {
-    width: 18,
+    width: 19,
     height: 2,
     borderRadius: 999,
     backgroundColor: "#F5F7FF",

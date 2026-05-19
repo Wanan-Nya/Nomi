@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
 
 type Mode = "chat" | "image";
-type Page = "home" | "settings" | "memory";
+type Page = "home" | "settings" | "memory" | "tasks";
 
 type Props = {
   open: boolean;
@@ -13,6 +13,7 @@ type Props = {
   onOpenImage: () => void;
   onOpenSettings: () => void;
   onOpenMemory: () => void;
+  onOpenTasks: () => void;
 };
 
 const DRAWER_WIDTH = 286;
@@ -26,11 +27,18 @@ export function SideDrawer({
   onOpenImage,
   onOpenSettings,
   onOpenMemory,
+  onOpenTasks,
 }: Props) {
   const [mounted, setMounted] = useState(open);
   const slide = useRef(new Animated.Value(open ? 1 : 0)).current;
   const backdrop = useRef(new Animated.Value(open ? 1 : 0)).current;
-  const itemAnims = useRef([new Animated.Value(0), new Animated.Value(0), new Animated.Value(0), new Animated.Value(0)]).current;
+  const itemAnims = useRef([
+    new Animated.Value(0),
+    new Animated.Value(0),
+    new Animated.Value(0),
+    new Animated.Value(0),
+    new Animated.Value(0),
+  ]).current;
 
   const items = useMemo(
     () => [
@@ -42,18 +50,18 @@ export function SideDrawer({
         onPress: onOpenChat,
       },
       {
-        key: "image",
-        title: "作图",
-        desc: "进入文生图和图生图",
-        active: page === "home" && mode === "image",
-        onPress: onOpenImage,
-      },
-      {
         key: "memory",
         title: "记忆",
         desc: "查看和管理长期记忆",
         active: page === "memory",
         onPress: onOpenMemory,
+      },
+      {
+        key: "tasks",
+        title: "事项簿",
+        desc: "查看和管理待办事项",
+        active: page === "tasks",
+        onPress: onOpenTasks,
       },
       {
         key: "settings",
@@ -63,7 +71,7 @@ export function SideDrawer({
         onPress: onOpenSettings,
       },
     ],
-    [mode, onOpenChat, onOpenImage, onOpenMemory, onOpenSettings, page]
+    [mode, onOpenChat, onOpenImage, onOpenMemory, onOpenSettings, onOpenTasks, page]
   );
 
   useEffect(() => {
@@ -154,7 +162,7 @@ export function SideDrawer({
         ]}
       >
         <Text style={styles.title}>菜单</Text>
-        <Text style={styles.subtitle}>从这里切换聊天、作图、记忆和设置。</Text>
+        <Text style={styles.subtitle}>从这里切换聊天、事项簿、记忆和设置。</Text>
 
         <View style={styles.itemList}>
           {items.map((item, index) => {

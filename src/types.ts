@@ -2,15 +2,59 @@ export type ChatMessage = {
   id: string;
   role: "system" | "user" | "assistant";
   content: string;
+  createdAt?: number;
   isTyping?: boolean;
+  parts?: RelayChatContentPart[];
+  attachments?: ChatAttachment[];
+};
+
+export type ChatAttachment = {
+  id: string;
+  kind: "image" | "file";
+  uri: string;
+  name: string;
+  mimeType: string;
+  size?: number;
+  text?: string;
+};
+
+export type TaskStatus = "open" | "done";
+
+export type TaskItem = {
+  id: string;
+  title: string;
+  note: string;
+  dueText?: string;
+  priority: number;
+  status: TaskStatus;
+  source: string;
+  tags: string[];
+  createdAt: number;
+  updatedAt: number;
+  completedAt?: number;
+};
+
+export type RelayChatContentPart =
+  | {
+      type: "text";
+      text: string;
+    }
+  | {
+      type: "image_url";
+      image_url: {
+        url: string;
+        detail?: "auto" | "low" | "high";
+      };
+    };
+
+export type RelayChatMessage = {
+  role: "system" | "user" | "assistant";
+  content: string | RelayChatContentPart[];
 };
 
 export type RelayChatRequest = {
   model: string;
-  messages: Array<{
-    role: "system" | "user" | "assistant";
-    content: string;
-  }>;
+  messages: RelayChatMessage[];
 };
 
 export type RelayChatResponse = {
@@ -74,5 +118,5 @@ export type ImageGenerationResult = {
   url?: string;
   b64_json?: string;
   revised_prompt?: string;
+  localUri?: string;
 };
-

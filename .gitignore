@@ -6,3 +6,16 @@ web-build
 .env
 .DS_Store
 *.log
+*.err
+apk/*.apk
+apk/*.aab
+android/android/local.properties
+android/android/.gradle/
+android/android/build/
+android/android/app/build/
+android/local.properties
+android/.gradle/
+android/build/
+android/app/build/
+.gradle-home/
+.tmp/

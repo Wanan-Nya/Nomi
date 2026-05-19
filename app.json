@@ -1,16 +1,17 @@
 {
   "expo": {
-    "name": "Nomi Mobile",
+    "name": "Nomi",
     "slug": "nomi-mobile",
     "scheme": "nomimobile",
-    "version": "0.2.0",
+    "version": "0.3.4",
+    "icon": "./nomi_mobile.png",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "plugins": [
       [
         "expo-image-picker",
         {
-          "photosPermission": "允许应用访问你的相册，用于选择图片进行图生图。",
+          "photosPermission": "Allow Nomi Mobile to access your photo library for image selection.",
           "cameraPermission": false,
           "microphonePermission": false
         }
@@ -18,10 +19,11 @@
       [
         "expo-media-library",
         {
-          "photosPermission": "允许应用访问你的相册，用于选择图片进行图生图。",
-          "savePhotosPermission": "允许应用保存生成的图片到相册。"
+          "photosPermission": "Allow Nomi Mobile to access your photo library for image selection.",
+          "savePhotosPermission": "Allow Nomi Mobile to save generated images to your photo library."
         }
       ],
+      "expo-document-picker",
       "expo-sqlite"
     ],
     "splash": {
@@ -29,7 +31,12 @@
     },
     "android": {
       "package": "com.nomi.mobile",
-      "versionCode": 2,
+      "versionCode": 10,
+      "softwareKeyboardLayoutMode": "resize",
+      "adaptiveIcon": {
+        "backgroundColor": "#081120",
+        "foregroundImage": "./nomi_mobile.png"
+      },
       "permissions": [
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
@@ -38,6 +45,11 @@
         "android.permission.READ_MEDIA_VIDEO",
         "android.permission.READ_MEDIA_AUDIO"
       ]
+    },
+    "androidStatusBar": {
+      "backgroundColor": "#081120",
+      "barStyle": "light-content",
+      "translucent": false
     },
     "ios": {
       "supportsTablet": true

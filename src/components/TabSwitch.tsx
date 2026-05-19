@@ -1,4 +1,4 @@
-import React from "react";
+﻿import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 type Props = {
@@ -22,16 +22,17 @@ export function TabSwitch({ value, onChange }: Props) {
 const styles = StyleSheet.create({
   wrap: {
     flexDirection: "row",
-    gap: 10,
-    padding: 6,
+    gap: 8,
+    padding: 5,
     borderRadius: 18,
     backgroundColor: "rgba(255,255,255,0.04)",
   },
   tab: {
     flex: 1,
     borderRadius: 14,
-    paddingVertical: 12,
+    minHeight: 46,
     alignItems: "center",
+    justifyContent: "center",
     backgroundColor: "transparent",
   },
   activeTab: {

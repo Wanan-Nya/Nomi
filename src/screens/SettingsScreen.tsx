@@ -1,5 +1,5 @@
-import React, { memo, useCallback } from "react";
-import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import React, { memo, useMemo, useState } from "react";
+import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 
 import { useRelaySettings } from "@/context/RelaySettingsContext";
@@ -112,91 +112,213 @@ const ImageField = memo(function ImageField({ title, value, onChange, onClear, h
   );
 });
 
-type Props = {
-  onClose: () => void;
+type ModelDraft = {
+  id?: string;
+  name: string;
+  baseUrl: string;
+  apiKey: string;
+  chatModel: string;
+  imageModel: string;
 };
 
-export function SettingsScreen({ onClose }: Props) {
+type Props = {
+  onClose: () => void;
+  onScrollDirection?: (direction: "up" | "down") => void;
+};
+
+function emptyDraft(): ModelDraft {
+  return {
+    name: "",
+    baseUrl: "",
+    apiKey: "",
+    chatModel: "",
+    imageModel: "",
+  };
+}
+
+export function SettingsScreen({ onScrollDirection }: Props) {
   const {
     settings,
-    setChatBaseUrl,
-    setChatApiKey,
-    setChatModel,
-    setImageBaseUrl,
-    setImageApiKey,
-    setImageModel,
+    addModelCard,
+    updateModelCard,
+    setActiveChatModelId,
+    setActiveImageModelId,
     setAiName,
     setPersona,
     setChatBackgroundUri,
     setUserAvatarUri,
     setAiAvatarUri,
   } = useRelaySettings();
-  const clearChatBackground = useCallback(() => setChatBackgroundUri(""), [setChatBackgroundUri]);
-  const clearUserAvatar = useCallback(() => setUserAvatarUri(""), [setUserAvatarUri]);
-  const clearAiAvatar = useCallback(() => setAiAvatarUri(""), [setAiAvatarUri]);
+  const [scrollY, setScrollY] = useState(0);
+  const [editorVisible, setEditorVisible] = useState(false);
+  const [editorMode, setEditorMode] = useState<"chat" | "image">("chat");
+  const [draft, setDraft] = useState<ModelDraft>(emptyDraft);
+  const [editorTitle, setEditorTitle] = useState("");
+
+  const chatModels = useMemo(
+    () => settings.models.filter((model) => model.id !== settings.activeImageModelId),
+    [settings.activeImageModelId, settings.models]
+  );
+  const imageModel = useMemo(
+    () => settings.models.find((model) => model.id === settings.activeImageModelId),
+    [settings.activeImageModelId, settings.models]
+  );
+  const activeChat = chatModels.find((model) => model.id === settings.activeChatModelId) ?? chatModels[0] ?? settings.models[0];
+
+  function openNewChatModel() {
+    setEditorMode("chat");
+    setEditorTitle("添加模型");
+    setDraft(emptyDraft());
+    setEditorVisible(true);
+  }
+
+  function openChatModel(modelId: string) {
+    const model = chatModels.find((item) => item.id === modelId);
+    if (!model) {
+      return;
+    }
+
+    setEditorMode("chat");
+    setEditorTitle("编辑聊天模型");
+    setDraft({
+      id: model.id,
+      name: model.name,
+      baseUrl: model.baseUrl,
+      apiKey: model.apiKey,
+      chatModel: model.chatModel,
+      imageModel: model.imageModel,
+    });
+    setEditorVisible(true);
+  }
+
+  function openImageModel() {
+    if (!imageModel) {
+      return;
+    }
+
+    setEditorMode("image");
+    setEditorTitle("编辑作图模型");
+    setDraft({
+      id: imageModel.id,
+      name: imageModel.name,
+      baseUrl: imageModel.baseUrl,
+      apiKey: imageModel.apiKey,
+      chatModel: imageModel.chatModel,
+      imageModel: imageModel.imageModel,
+    });
+    setEditorVisible(true);
+  }
+
+  function saveDraft() {
+    if (editorMode === "chat") {
+      if (draft.id) {
+        updateModelCard(draft.id, {
+          name: draft.name,
+          baseUrl: draft.baseUrl,
+          apiKey: draft.apiKey,
+          chatModel: draft.chatModel,
+          imageModel: draft.imageModel,
+        });
+        setActiveChatModelId(draft.id);
+      } else {
+        const id = addModelCard({
+          name: draft.name,
+          baseUrl: draft.baseUrl,
+          apiKey: draft.apiKey,
+          chatModel: draft.chatModel,
+          imageModel: draft.imageModel,
+        });
+        setActiveChatModelId(id);
+      }
+    } else if (draft.id) {
+      updateModelCard(draft.id, {
+        name: draft.name,
+        baseUrl: draft.baseUrl,
+        apiKey: draft.apiKey,
+        chatModel: draft.chatModel,
+        imageModel: draft.imageModel,
+      });
+      setActiveImageModelId(draft.id);
+    }
+
+    setEditorVisible(false);
+  }
+
+  const clearChatBackground = () => setChatBackgroundUri("");
+  const clearUserAvatar = () => setUserAvatarUri("");
+  const clearAiAvatar = () => setAiAvatarUri("");
 
   return (
-    <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-      <View style={styles.headerCard}>
-        <View>
-          <Text style={styles.pageTitle}>设置</Text>
-          <Text style={styles.pageSubtitle}>在这里配置聊天、作图和外观资源，修改会立即生效。</Text>
+    <ScrollView
+      contentContainerStyle={styles.scrollContent}
+      showsVerticalScrollIndicator={false}
+      onScroll={(event) => {
+        const y = event.nativeEvent.contentOffset.y;
+        const delta = y - scrollY;
+        if (Math.abs(delta) > 12) {
+          onScrollDirection?.(delta > 0 ? "up" : "down");
+        }
+        setScrollY(y);
+      }}
+      scrollEventThrottle={16}
+    >
+      <View style={styles.card}>
+        <View style={styles.sectionHeader}>
+          <View>
+            <Text style={styles.sectionTitle}>聊天模型</Text>
+            <Text style={styles.sectionHelper}>点击卡片查看或编辑详情。这里只显示自定义名称。</Text>
+          </View>
+          <Pressable onPress={openNewChatModel} style={styles.addButton}>
+            <Text style={styles.addButtonText}>添加模型</Text>
+          </Pressable>
         </View>
-        <Pressable onPress={onClose} style={styles.closeButton}>
-          <Text style={styles.closeButtonText}>返回</Text>
-        </Pressable>
+
+        <View style={styles.activeRow}>
+          <View style={styles.activeBadge}>
+            <Text style={styles.activeBadgeLabel}>当前聊天</Text>
+            <Text style={styles.activeBadgeValue} numberOfLines={1}>
+              {activeChat?.name ?? "未配置"}
+            </Text>
+          </View>
+          <View style={styles.activeBadge}>
+            <Text style={styles.activeBadgeLabel}>当前作图</Text>
+            <Text style={styles.activeBadgeValue} numberOfLines={1}>
+              {imageModel?.name ?? "未配置"}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.modelList}>
+          {chatModels.map((model) => {
+            const active = model.id === settings.activeChatModelId;
+            return (
+              <Pressable
+                key={model.id}
+                onPress={() => openChatModel(model.id)}
+                style={({ pressed }) => [styles.modelCard, active && styles.modelCardActive, pressed && styles.modelCardPressed]}
+              >
+                <Text style={styles.modelName}>{model.name}</Text>
+                <Text style={styles.modelMeta}>{active ? "当前模型" : "点按查看详情"}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.sectionTitle}>聊天设置</Text>
-        <Field
-          label="聊天 API Base URL"
-          value={settings.chat.baseUrl}
-          onChange={setChatBaseUrl}
-          placeholder="https://relay.example.com"
-          helper="填写聊天接口的中转站地址。"
-        />
-        <Field
-          label="聊天 API Key"
-          value={settings.chat.apiKey}
-          onChange={setChatApiKey}
-          placeholder="输入聊天接口密钥"
-          secureTextEntry
-          helper="如果你的中转站不需要密钥，这里可以留空。"
-        />
-        <Field
-          label="聊天模型"
-          value={settings.chat.model}
-          onChange={setChatModel}
-          placeholder="gpt-4o-mini"
-          helper="直接输入模型名即可。"
-        />
-      </View>
+        <View style={styles.sectionHeader}>
+          <View>
+            <Text style={styles.sectionTitle}>作图模型</Text>
+            <Text style={styles.sectionHelper}>作图模型只保留单独一张卡片，不参与添加列表。</Text>
+          </View>
+        </View>
 
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>图片生成设置</Text>
-        <Field
-          label="图片 API Base URL"
-          value={settings.image.baseUrl}
-          onChange={setImageBaseUrl}
-          placeholder="https://relay.example.com"
-          helper="填写图片接口的中转站地址。"
-        />
-        <Field
-          label="图片 API Key"
-          value={settings.image.apiKey}
-          onChange={setImageApiKey}
-          placeholder="输入图片接口密钥"
-          secureTextEntry
-          helper="如果和聊天共用同一个 key，也可以直接填一样的。"
-        />
-        <Field
-          label="图片模型"
-          value={settings.image.model}
-          onChange={setImageModel}
-          placeholder="gpt-image-2"
-          helper="直接输入模型名即可。"
-        />
+        {imageModel ? (
+          <Pressable onPress={openImageModel} style={({ pressed }) => [styles.imageModelCard, pressed && styles.modelCardPressed]}>
+            <Text style={styles.modelName}>{imageModel.name}</Text>
+            <Text style={styles.modelMeta}>点按查看详情</Text>
+          </Pressable>
+        ) : null}
       </View>
 
       <View style={styles.card}>
@@ -253,10 +375,52 @@ export function SettingsScreen({ onClose }: Props) {
 
       <View style={styles.tipBox}>
         <Text style={styles.tipTitle}>提示</Text>
-        <Text style={styles.tipText}>
-          你改完设置后可以直接回到聊天页或作图页，新的配置会立刻生效，不需要重启应用。
-        </Text>
+        <Text style={styles.tipText}>设置修改后会立即生效，不需要重启应用。</Text>
       </View>
+
+      <Modal visible={editorVisible} transparent animationType="fade" onRequestClose={() => setEditorVisible(false)}>
+        <Pressable style={styles.modalBackdrop} onPress={() => setEditorVisible(false)}>
+          <Pressable style={styles.modalCard} onPress={() => null}>
+            <Text style={styles.modalTitle}>{editorTitle}</Text>
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.modalContent}>
+              <Field label="自定义名称" value={draft.name} onChange={(value) => setDraft((current) => ({ ...current, name: value }))} placeholder="模型名称" />
+              <Field
+                label="Base URL"
+                value={draft.baseUrl}
+                onChange={(value) => setDraft((current) => ({ ...current, baseUrl: value }))}
+                placeholder="https://relay.example.com"
+              />
+              <Field
+                label="API Key"
+                value={draft.apiKey}
+                onChange={(value) => setDraft((current) => ({ ...current, apiKey: value }))}
+                placeholder="输入密钥"
+                secureTextEntry
+              />
+              <Field
+                label="聊天模型"
+                value={draft.chatModel}
+                onChange={(value) => setDraft((current) => ({ ...current, chatModel: value }))}
+                placeholder="gpt-4o-mini"
+              />
+              <Field
+                label="作图模型"
+                value={draft.imageModel}
+                onChange={(value) => setDraft((current) => ({ ...current, imageModel: value }))}
+                placeholder="gpt-image-2"
+              />
+            </ScrollView>
+            <View style={styles.modalActions}>
+              <Pressable onPress={() => setEditorVisible(false)} style={styles.modalGhostButton}>
+                <Text style={styles.modalGhostButtonText}>取消</Text>
+              </Pressable>
+              <Pressable onPress={saveDraft} style={styles.modalPrimaryButton}>
+                <Text style={styles.modalPrimaryButtonText}>保存</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </ScrollView>
   );
 }
@@ -264,47 +428,9 @@ export function SettingsScreen({ onClose }: Props) {
 const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 16,
-    paddingTop: 56,
+    paddingTop: 12,
     paddingBottom: 18,
     gap: 12,
-  },
-  headerCard: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 12,
-    padding: 16,
-    borderRadius: 22,
-    backgroundColor: "rgba(255,255,255,0.06)",
-    borderWidth: 1,
-    borderColor: "rgba(146, 171, 255, 0.14)",
-  },
-  pageTitle: {
-    color: "#F5F7FF",
-    fontSize: 24,
-    fontWeight: "900",
-  },
-  pageSubtitle: {
-    marginTop: 4,
-    color: "#A7B6D8",
-    fontSize: 13,
-    lineHeight: 19,
-    maxWidth: 240,
-  },
-  closeButton: {
-    minHeight: 40,
-    paddingHorizontal: 14,
-    borderRadius: 999,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.08)",
-    borderWidth: 1,
-    borderColor: "rgba(146, 171, 255, 0.12)",
-  },
-  closeButtonText: {
-    color: "#DCE6FF",
-    fontSize: 13,
-    fontWeight: "800",
   },
   card: {
     gap: 10,
@@ -314,10 +440,94 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(146, 171, 255, 0.12)",
   },
+  sectionHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+  },
   sectionTitle: {
     color: "#F5F7FF",
     fontSize: 16,
     fontWeight: "800",
+  },
+  sectionHelper: {
+    marginTop: 4,
+    color: "#8FA0C4",
+    fontSize: 12,
+    lineHeight: 18,
+    maxWidth: 220,
+  },
+  addButton: {
+    minHeight: 40,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#5E85FF",
+  },
+  addButtonText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  activeRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  activeBadge: {
+    flex: 1,
+    gap: 2,
+    padding: 12,
+    borderRadius: 18,
+    backgroundColor: "rgba(8,16,32,0.74)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.06)",
+  },
+  activeBadgeLabel: {
+    color: "#9FB0D4",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  activeBadgeValue: {
+    color: "#F7FAFF",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  modelList: {
+    gap: 10,
+  },
+  modelCard: {
+    gap: 4,
+    padding: 14,
+    borderRadius: 18,
+    backgroundColor: "rgba(8,16,32,0.78)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.06)",
+  },
+  imageModelCard: {
+    gap: 4,
+    padding: 14,
+    borderRadius: 18,
+    backgroundColor: "rgba(8,16,32,0.78)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.06)",
+  },
+  modelCardActive: {
+    borderColor: "rgba(94,133,255,0.7)",
+    backgroundColor: "rgba(94,133,255,0.16)",
+  },
+  modelCardPressed: {
+    opacity: 0.88,
+  },
+  modelName: {
+    color: "#F7FAFF",
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  modelMeta: {
+    color: "#8FA0C4",
+    fontSize: 11,
   },
   fieldWrap: {
     gap: 6,
@@ -359,17 +569,13 @@ const styles = StyleSheet.create({
   },
   emptyPreview: {
     width: "100%",
-    minHeight: 120,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "rgba(8, 16, 32, 0.95)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.06)",
   },
   emptyPreviewText: {
     color: "#8FA0C4",
     fontSize: 13,
-    fontWeight: "700",
   },
   imageActions: {
     flexDirection: "row",
@@ -377,8 +583,8 @@ const styles = StyleSheet.create({
   },
   actionButton: {
     flex: 1,
-    height: 40,
-    borderRadius: 12,
+    minHeight: 42,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#5E85FF",
@@ -389,9 +595,7 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   actionButtonGhost: {
-    backgroundColor: "rgba(255,255,255,0.06)",
-    borderWidth: 1,
-    borderColor: "rgba(146, 171, 255, 0.12)",
+    backgroundColor: "rgba(255,255,255,0.08)",
   },
   actionButtonGhostText: {
     color: "#DCE6FF",
@@ -399,21 +603,78 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   tipBox: {
+    gap: 8,
     padding: 14,
-    borderRadius: 20,
-    backgroundColor: "rgba(143,180,255,0.10)",
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.05)",
     borderWidth: 1,
-    borderColor: "rgba(143,180,255,0.16)",
+    borderColor: "rgba(146,171,255,0.12)",
   },
   tipTitle: {
     color: "#F5F7FF",
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: "800",
-    marginBottom: 4,
   },
   tipText: {
-    color: "#DCE6FF",
+    color: "#A7B6D8",
     fontSize: 13,
     lineHeight: 19,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  modalCard: {
+    width: "100%",
+    maxWidth: 380,
+    maxHeight: "80%",
+    padding: 14,
+    borderRadius: 22,
+    backgroundColor: "#0E1730",
+    borderWidth: 1,
+    borderColor: "rgba(146,171,255,0.14)",
+  },
+  modalTitle: {
+    color: "#F5F7FF",
+    fontSize: 16,
+    fontWeight: "800",
+    marginBottom: 10,
+  },
+  modalContent: {
+    gap: 10,
+  },
+  modalActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 12,
+  },
+  modalGhostButton: {
+    flex: 1,
+    minHeight: 46,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 16,
+    backgroundColor: "rgba(255,255,255,0.06)",
+  },
+  modalGhostButtonText: {
+    color: "#DCE6FF",
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  modalPrimaryButton: {
+    flex: 1,
+    minHeight: 46,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 16,
+    backgroundColor: "#5E85FF",
+  },
+  modalPrimaryButtonText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "800",
   },
 });

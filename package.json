@@ -1,6 +1,6 @@
 {
   "name": "nomi-mobile",
-  "version": "0.2.0",
+  "version": "0.3.4",
   "private": true,
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
@@ -10,17 +10,18 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "build:apk": "eas build -p android --profile preview"
+    "build:apk": "eas build -p android --profile preview",
+    "export:apk": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/export-apk.ps1"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
     "babel-preset-expo": "~54.0.10",
     "expo": "^54.0.34",
+    "expo-document-picker": "^55.0.13",
     "expo-file-system": "~19.0.22",
     "expo-image-picker": "~17.0.11",
     "expo-media-library": "~18.2.1",
     "expo-sqlite": "~16.0.10",
-    "expo-status-bar": "~3.0.9",
     "react": "19.1.0",
     "react-native": "0.81.5"
   },

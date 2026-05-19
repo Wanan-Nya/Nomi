@@ -1,6 +1,7 @@
 import { RelayConnectionSettings } from "@/context/RelaySettingsContext";
 import {
   ImageGenerationResult,
+  RelayChatContentPart,
   RelayChatRequest,
   RelayChatResponse,
   RelayImageEditRequest,

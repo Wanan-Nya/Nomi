@@ -1,5 +1,5 @@
 import React, { memo, useEffect, useMemo, useRef } from "react";
-import { Animated, Image, StyleSheet, Text, View } from "react-native";
+import { Animated, Image, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { ChatMessage } from "@/types";
 
@@ -8,6 +8,9 @@ type Props = {
   assistantName: string;
   userAvatarUri?: string;
   assistantAvatarUri?: string;
+  onLongPress?: (message: ChatMessage) => void;
+  onPress?: (message: ChatMessage) => void;
+  selected?: boolean;
 };
 
 function Avatar({ uri, fallback, tint }: { uri?: string; fallback: string; tint: "user" | "assistant" }) {
@@ -75,7 +78,36 @@ function TypingDots() {
   );
 }
 
-function ChatBubbleImpl({ message, assistantName, userAvatarUri, assistantAvatarUri }: Props) {
+function AttachmentPreview({ attachment }: { attachment: NonNullable<ChatMessage["attachments"]>[number] }) {
+  if (attachment.kind === "image") {
+    return (
+      <View style={styles.attachmentImageWrap}>
+        <Image source={{ uri: attachment.uri }} style={styles.attachmentImage} />
+        <Text style={styles.attachmentLabel} numberOfLines={1}>
+          {attachment.name}
+        </Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.fileAttachment}>
+      <Text style={styles.fileAttachmentTitle} numberOfLines={1}>
+        {attachment.name}
+      </Text>
+      <Text style={styles.fileAttachmentMeta} numberOfLines={1}>
+        {attachment.mimeType}
+      </Text>
+      {attachment.text ? (
+        <Text style={styles.fileAttachmentText} numberOfLines={3}>
+          {attachment.text}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+function ChatBubbleImpl({ message, assistantName, userAvatarUri, assistantAvatarUri, onLongPress, onPress, selected }: Props) {
   const isUser = message.role === "user";
   const isTyping = Boolean(message.isTyping);
   const speaker = isUser ? "我" : assistantName || "AI";
@@ -112,6 +144,8 @@ function ChatBubbleImpl({ message, assistantName, userAvatarUri, assistantAvatar
     [entry, isUser]
   );
 
+  const attachments = message.attachments ?? [];
+
   return (
     <Animated.View style={[styles.row, isUser && styles.rowUser, animatedStyle]}>
       {!isUser ? (
@@ -120,10 +154,30 @@ function ChatBubbleImpl({ message, assistantName, userAvatarUri, assistantAvatar
         </View>
       ) : null}
 
-      <View style={[styles.bubble, isUser ? styles.userBubble : styles.assistantBubble]}>
+      <Pressable
+        onPress={() => onPress?.(message)}
+        onLongPress={() => onLongPress?.(message)}
+        style={[styles.bubble, isUser ? styles.userBubble : styles.assistantBubble, selected && styles.bubbleSelected]}
+      >
+        <View style={[styles.tail, isUser ? styles.userTail : styles.assistantTail]} />
         <Text style={[styles.role, isUser ? styles.roleUser : styles.roleAssistant]}>{speaker}</Text>
-        {isTyping ? <TypingDots /> : <Text style={styles.content}>{message.content}</Text>}
-      </View>
+
+        {isTyping ? (
+          <TypingDots />
+        ) : (
+          <Text selectable style={styles.content}>
+            {message.content}
+          </Text>
+        )}
+
+        {attachments.length ? (
+          <View style={styles.attachments}>
+            {attachments.map((attachment) => (
+              <AttachmentPreview key={attachment.id} attachment={attachment} />
+            ))}
+          </View>
+        ) : null}
+      </Pressable>
 
       {isUser ? (
         <View style={styles.avatarWrap}>
@@ -185,6 +239,12 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
     elevation: 2,
+    gap: 8,
+    overflow: "visible",
+  },
+  bubbleSelected: {
+    borderWidth: 1,
+    borderColor: "rgba(142, 178, 255, 0.82)",
   },
   userBubble: {
     backgroundColor: "#4F7CFF",
@@ -194,10 +254,24 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.07)",
     borderBottomLeftRadius: 6,
   },
+  tail: {
+    position: "absolute",
+    width: 12,
+    height: 12,
+    top: 10,
+    transform: [{ rotate: "45deg" }],
+  },
+  assistantTail: {
+    left: -4,
+    backgroundColor: "rgba(255,255,255,0.07)",
+  },
+  userTail: {
+    right: -4,
+    backgroundColor: "#4F7CFF",
+  },
   role: {
     fontSize: 12,
     fontWeight: "700",
-    marginBottom: 6,
   },
   roleUser: {
     color: "rgba(255,255,255,0.82)",
@@ -209,6 +283,44 @@ const styles = StyleSheet.create({
     color: "#F7FAFF",
     fontSize: 15,
     lineHeight: 22,
+  },
+  attachments: {
+    gap: 8,
+  },
+  attachmentImageWrap: {
+    gap: 6,
+  },
+  attachmentImage: {
+    width: "100%",
+    aspectRatio: 1.2,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.06)",
+  },
+  attachmentLabel: {
+    color: "#DCE6FF",
+    fontSize: 11,
+  },
+  fileAttachment: {
+    gap: 4,
+    padding: 10,
+    borderRadius: 14,
+    backgroundColor: "rgba(8, 16, 32, 0.5)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+  },
+  fileAttachmentTitle: {
+    color: "#F7FAFF",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  fileAttachmentMeta: {
+    color: "#9FB0D4",
+    fontSize: 11,
+  },
+  fileAttachmentText: {
+    color: "#D8E3FF",
+    fontSize: 12,
+    lineHeight: 18,
   },
   typingRow: {
     flexDirection: "row",
