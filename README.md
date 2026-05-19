@@ -1,15 +1,14 @@
 # Nomi Mobile
 
-Nomi Mobile 是一个基于 Expo + React Native 的 AI 手机应用，当前聚焦两个核心能力：
+Nomi Mobile 是一个基于 Expo + React Native 的 AI 移动应用，当前只支持通过中转站 API 接入。
+
+## 功能
 
 - 聊天
 - 作图
 - 事项簿
-
-同时支持：
-
-- 本地保存 API 配置
-- 左侧抽屉进入设置页
+- 本地保存配置
+- 左侧抽屉设置
 - 长期记忆
 - 多张参考图作图
 
@@ -38,7 +37,7 @@ Nomi Mobile/
   - 应用入口
   - 负责顶栏、侧边栏、页面切换和背景层
 - `src/context/RelaySettingsContext.tsx`
-  - 管理聊天 / 作图 / 头像 / 人设等设置
+  - 管理聊天、作图、头像和人设设置
   - 自动同步到 `AsyncStorage`
 - `src/screens/ChatScreen.tsx`
   - 聊天页
@@ -73,18 +72,25 @@ npm run start:tunnel
 
 ## 环境变量
 
-推荐在 `.env` 中配置以下变量：
+当前项目只支持中转站 API。请在 `.env` 中配置以下变量：
 
-- `EXPO_PUBLIC_CHAT_API_BASE_URL`
-- `EXPO_PUBLIC_CHAT_API_KEY`
+- `EXPO_PUBLIC_API_BASE_URL`
+- `EXPO_PUBLIC_API_KEY`
 - `EXPO_PUBLIC_CHAT_MODEL`
-- `EXPO_PUBLIC_IMAGE_API_BASE_URL`
-- `EXPO_PUBLIC_IMAGE_API_KEY`
 - `EXPO_PUBLIC_IMAGE_MODEL`
+- `EXPO_PUBLIC_CHAT_ENDPOINT`
+- `EXPO_PUBLIC_IMAGE_ENDPOINT`
+- `EXPO_PUBLIC_IMAGE_GENERATION_ENDPOINT`
+- `EXPO_PUBLIC_IMAGE_EDIT_ENDPOINT`
 - `EXPO_PUBLIC_AI_NAME`
 - `EXPO_PUBLIC_AI_PERSONA`
 
-如果聊天和作图共用同一个中转站，也可以只配置通用的 `EXPO_PUBLIC_API_BASE_URL` 和 `EXPO_PUBLIC_API_KEY`。
+说明：
+
+- `EXPO_PUBLIC_API_BASE_URL` 应填写你的中转站地址
+- `EXPO_PUBLIC_API_KEY` 应填写中转站提供的 key
+- 当前代码不会直连官方 OpenAI 接口，只会走你配置的中转站
+- `.env` 不会提交到仓库，仓库里只保留 `.env.example`
 
 ## 当前接口约定
 
@@ -92,4 +98,10 @@ npm run start:tunnel
 - 文生图: `/v1/images/generations`
 - 图生图: `/v1/images/edits`
 
-如果你的中转服务路径不同，只要在设置里改 `baseUrl` 即可。
+如果你的中转服务路径不同，可以在设置页里修改 `baseUrl` 和相关端点。
+
+## 安全说明
+
+- 仓库不会包含你的真实 `API key`
+- 只有你本地的 `.env` 会保存真实配置
+- 如果你怀疑 key 泄露，应该立刻在中转站后台重新生成
