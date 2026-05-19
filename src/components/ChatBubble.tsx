@@ -159,7 +159,6 @@ function ChatBubbleImpl({ message, assistantName, userAvatarUri, assistantAvatar
         onLongPress={() => onLongPress?.(message)}
         style={[styles.bubble, isUser ? styles.userBubble : styles.assistantBubble, selected && styles.bubbleSelected]}
       >
-        <View style={[styles.tail, isUser ? styles.userTail : styles.assistantTail]} />
         <Text style={[styles.role, isUser ? styles.roleUser : styles.roleAssistant]}>{speaker}</Text>
 
         {isTyping ? (
@@ -248,30 +247,14 @@ const styles = StyleSheet.create({
   },
   userBubble: {
     backgroundColor: "#4F7CFF",
-    borderBottomRightRadius: 6,
   },
   assistantBubble: {
     backgroundColor: "rgba(255,255,255,0.07)",
-    borderBottomLeftRadius: 6,
-  },
-  tail: {
-    position: "absolute",
-    width: 12,
-    height: 12,
-    top: 10,
-    transform: [{ rotate: "45deg" }],
-  },
-  assistantTail: {
-    left: -4,
-    backgroundColor: "rgba(255,255,255,0.07)",
-  },
-  userTail: {
-    right: -4,
-    backgroundColor: "#4F7CFF",
   },
   role: {
     fontSize: 12,
     fontWeight: "700",
+    marginBottom: 6,
   },
   roleUser: {
     color: "rgba(255,255,255,0.82)",

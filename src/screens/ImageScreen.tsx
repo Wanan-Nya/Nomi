@@ -1,4 +1,4 @@
-import React, { memo, useEffect, useMemo, useState } from "react";
+﻿import React, { memo, useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Image,
@@ -155,6 +155,9 @@ export function ImageScreen({ onScrollDirection }: Props) {
   const [outputFormat, setOutputFormat] = useState<ImageOutputFormat>("png");
   const [history, setHistory] = useState<ImageHistoryEntry[]>([]);
   const [scrollY, setScrollY] = useState(0);
+  const [previewAspectRatio, setPreviewAspectRatio] = useState<number | null>(null);
+  const [historyExpanded, setHistoryExpanded] = useState(false);
+  const [selectedHistoryIds, setSelectedHistoryIds] = useState<string[]>([]);
   const modeHint = mode === "generate" ? "直接生成一张新图" : `已选择 ${selectedImages.length} 张参考图`;
 
   useEffect(() => {
@@ -187,6 +190,16 @@ export function ImageScreen({ onScrollDirection }: Props) {
   const previewUri = useMemo(() => thumbnailUri(result), [result]);
 
   const visibleHistory = useMemo(() => history.slice().sort((left, right) => right.createdAt - left.createdAt), [history]);
+
+  useEffect(() => {
+    setPreviewAspectRatio(null);
+  }, [previewUri]);
+
+  useEffect(() => {
+    setSelectedHistoryIds((current) => current.filter((id) => history.some((entry) => entry.id === id)));
+  }, [history]);
+
+  const historySelectionMode = selectedHistoryIds.length > 0;
 
   async function handlePickImages() {
     setError("");
@@ -224,6 +237,24 @@ export function ImageScreen({ onScrollDirection }: Props) {
 
   function removeSelectedImage(index: number) {
     setSelectedImages((current) => current.filter((_, itemIndex) => itemIndex !== index));
+  }
+
+  function toggleHistorySelection(id: string) {
+    setSelectedHistoryIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
+  }
+
+  function clearHistorySelection() {
+    setSelectedHistoryIds([]);
+  }
+
+  function deleteSelectedHistory() {
+    if (!selectedHistoryIds.length) {
+      return;
+    }
+
+    setHistory((current) => current.filter((entry) => !selectedHistoryIds.includes(entry.id)));
+    clearHistorySelection();
+    setStatus(`已删除 ${selectedHistoryIds.length} 条历史记录`);
   }
 
   function restoreFromHistory(entry: ImageHistoryEntry, asEdit: boolean) {
@@ -298,6 +329,8 @@ export function ImageScreen({ onScrollDirection }: Props) {
       const materialized = await materializeResult(generated, outputFormat);
       setResult(materialized);
       setStatus(nextMode === "generate" ? "生成成功" : "编辑成功");
+      setPrompt("");
+      setSelectedImages([]);
 
       await recordHistory({
         id: `history-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -420,47 +453,24 @@ export function ImageScreen({ onScrollDirection }: Props) {
         </View>
 
         {previewUri ? (
-          <Image source={{ uri: previewUri }} style={styles.image} />
+          <Image
+            source={{ uri: previewUri }}
+            style={[styles.image, previewAspectRatio ? { aspectRatio: previewAspectRatio } : null]}
+            resizeMode="contain"
+            onLoad={(event) => {
+              const { width, height } = event.nativeEvent.source;
+              if (width > 0 && height > 0) {
+                setPreviewAspectRatio(width / height);
+              }
+            }}
+          />
         ) : (
           <View style={styles.emptyPreview}>
             <Text style={styles.emptyText}>{mode === "generate" ? "生成结果会显示在这里" : "编辑结果会显示在这里"}</Text>
           </View>
         )}
 
-        {result?.revised_prompt ? <Text style={styles.helper}>模型改写后的提示词：{result.revised_prompt}</Text> : null}
-      </View>
-
-      <View style={styles.card}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.label}>生成历史</Text>
-          <Text style={styles.helper}>{visibleHistory.length} 条</Text>
-        </View>
-        {visibleHistory.length ? (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.historyRow}>
-            {visibleHistory.map((entry) => {
-              const thumbnail = entry.result.localUri ?? entry.result.url;
-              return (
-                <View key={entry.id} style={styles.historyCard}>
-                  {thumbnail ? <Image source={{ uri: thumbnail }} style={styles.historyImage} /> : <View style={styles.historyEmpty} />}
-                  <Text style={styles.historyMode}>{entry.mode === "generate" ? "文生图" : "图生图"}</Text>
-                  <Text style={styles.historyPrompt} numberOfLines={3}>
-                    {entry.prompt || "无提示词"}
-                  </Text>
-                  <View style={styles.historyActions}>
-                    <Pressable onPress={() => restoreFromHistory(entry, false)} style={styles.historyButton}>
-                      <Text style={styles.historyButtonText}>再生成</Text>
-                    </Pressable>
-                    <Pressable onPress={() => restoreFromHistory(entry, true)} style={[styles.historyButton, styles.historyButtonPrimary]}>
-                      <Text style={styles.historyButtonText}>重新编辑</Text>
-                    </Pressable>
-                  </View>
-                </View>
-              );
-            })}
-          </ScrollView>
-        ) : (
-          <Text style={styles.helper}>这里会保存最近的生成记录，方便回退和重做。</Text>
-        )}
+      {result?.revised_prompt ? <Text style={styles.helper}>模型改写后的提示词：{result.revised_prompt}</Text> : null}
       </View>
 
       <View style={styles.card}>
@@ -487,6 +497,89 @@ export function ImageScreen({ onScrollDirection }: Props) {
           ) : null}
         </View>
       </View>
+
+      <View style={styles.card}>
+        <Pressable
+          onPress={() => {
+            if (historySelectionMode) {
+              clearHistorySelection();
+            }
+            setHistoryExpanded((current) => !current);
+          }}
+          style={styles.historyPanelHeader}
+        >
+          <View style={styles.historyPanelHeaderText}>
+            <Text style={styles.label}>生成历史</Text>
+            <Text style={styles.helper}>{visibleHistory.length} 条 · {historyExpanded ? "点击收起" : "点击展开"}</Text>
+          </View>
+          <Text style={styles.historyPanelToggle}>{historyExpanded ? "收起" : "展开"}</Text>
+        </Pressable>
+
+        {historyExpanded ? (
+          visibleHistory.length ? (
+            <>
+              {historySelectionMode ? (
+                <View style={styles.historySelectionBar}>
+                  <Text style={styles.historySelectionText}>已选择 {selectedHistoryIds.length} 条</Text>
+                  <View style={styles.historySelectionActions}>
+                    <Pressable onPress={clearHistorySelection} style={styles.historySelectionButton}>
+                      <Text style={styles.historySelectionButtonText}>取消选择</Text>
+                    </Pressable>
+                    <Pressable onPress={deleteSelectedHistory} style={[styles.historySelectionButton, styles.historySelectionButtonDanger]}>
+                      <Text style={styles.historySelectionButtonText}>删除</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ) : null}
+
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.historyRow}>
+                {visibleHistory.map((entry) => {
+                  const thumbnail = entry.result.localUri ?? entry.result.url;
+                  const selected = selectedHistoryIds.includes(entry.id);
+                  return (
+                    <Pressable
+                      key={entry.id}
+                      onPress={() => {
+                        if (historySelectionMode) {
+                          toggleHistorySelection(entry.id);
+                          return;
+                        }
+
+                        restoreFromHistory(entry, entry.mode === "edit");
+                      }}
+                      onLongPress={() => {
+                        setHistoryExpanded(true);
+                        toggleHistorySelection(entry.id);
+                      }}
+                      delayLongPress={250}
+                      style={[styles.historyCard, selected && styles.historyCardSelected]}
+                    >
+                      {thumbnail ? <Image source={{ uri: thumbnail }} style={styles.historyImage} /> : <View style={styles.historyEmpty} />}
+                      <View style={styles.historyCardMeta}>
+                        <Text style={styles.historyMode}>{entry.mode === "generate" ? "文生图" : "图生图"}</Text>
+                        {selected ? <Text style={styles.historySelectedMark}>已选</Text> : null}
+                      </View>
+                      <Text style={styles.historyPrompt} numberOfLines={3}>
+                        {entry.prompt || "无提示词"}
+                      </Text>
+                      {!historySelectionMode ? (
+                        <View style={styles.historyActionRow}>
+                          <Pressable onPress={() => restoreFromHistory(entry, true)} style={styles.historyActionButton}>
+                            <Text style={styles.historyActionButtonText}>再生成</Text>
+                          </Pressable>
+                        </View>
+                      ) : null}
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            </>
+          ) : (
+            <Text style={styles.helper}>这里会保存最近的生成记录，方便回退和重做。</Text>
+          )
+        ) : null}
+      </View>
+
     </ScrollView>
   );
 }
@@ -673,6 +766,58 @@ const styles = StyleSheet.create({
     color: "#8FA0C4",
     fontSize: 13,
   },
+  historyPanelHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  historyPanelHeaderText: {
+    flex: 1,
+    gap: 4,
+  },
+  historyPanelToggle: {
+    color: "#F7FAFF",
+    fontSize: 12,
+    fontWeight: "800",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
+  historySelectionBar: {
+    gap: 8,
+    padding: 10,
+    borderRadius: 16,
+    backgroundColor: "rgba(94,133,255,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(94,133,255,0.28)",
+  },
+  historySelectionText: {
+    color: "#DCE6FF",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  historySelectionActions: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  historySelectionButton: {
+    flex: 1,
+    minHeight: 36,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 12,
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
+  historySelectionButtonDanger: {
+    backgroundColor: "rgba(255, 108, 122, 0.2)",
+  },
+  historySelectionButtonText: {
+    color: "#F7FAFF",
+    fontSize: 12,
+    fontWeight: "800",
+  },
   historyRow: {
     gap: 10,
     paddingRight: 4,
@@ -686,11 +831,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.06)",
   },
+  historyCardSelected: {
+    backgroundColor: "rgba(94,133,255,0.16)",
+    borderColor: "rgba(94,133,255,0.58)",
+  },
   historyImage: {
     width: "100%",
     height: 120,
     borderRadius: 14,
     backgroundColor: "rgba(255,255,255,0.06)",
+  },
+  historyCardMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
   },
   historyEmpty: {
     width: "100%",
@@ -703,10 +858,34 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "700",
   },
+  historySelectedMark: {
+    color: "#DCE6FF",
+    fontSize: 11,
+    fontWeight: "700",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
   historyPrompt: {
     color: "#F7FAFF",
     fontSize: 12,
     lineHeight: 18,
+  },
+  historyActionRow: {
+    marginTop: 2,
+  },
+  historyActionButton: {
+    minHeight: 36,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 12,
+    backgroundColor: "#5E85FF",
+  },
+  historyActionButtonText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "800",
   },
   historyActions: {
     flexDirection: "row",

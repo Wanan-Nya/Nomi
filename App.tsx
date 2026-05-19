@@ -316,10 +316,26 @@ function MainApp() {
           </Animated.View>
         </View>
       </Animated.View>
-      <View style={[styles.screenWrap, { top: topBarHeight }]} {...swipeResponder.panHandlers}>
+      <Animated.View
+        style={[
+          styles.screenWrap,
+          {
+            paddingTop: topBarHeight,
+            transform: [
+              {
+                translateY: chromeAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [-topBarHeight, 0],
+                }),
+              },
+            ],
+          },
+        ]}
+        {...swipeResponder.panHandlers}
+      >
         {homeScreen}
         {overlayScreen}
-      </View>
+      </Animated.View>
     </>
   );
 

@@ -22,15 +22,15 @@ export function TabSwitch({ value, onChange }: Props) {
 const styles = StyleSheet.create({
   wrap: {
     flexDirection: "row",
-    gap: 8,
-    padding: 5,
-    borderRadius: 18,
+    gap: 6,
+    padding: 4,
+    borderRadius: 16,
     backgroundColor: "rgba(255,255,255,0.04)",
   },
   tab: {
     flex: 1,
-    borderRadius: 14,
-    minHeight: 46,
+    borderRadius: 12,
+    minHeight: 40,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "transparent",
@@ -40,7 +40,7 @@ const styles = StyleSheet.create({
   },
   label: {
     color: "#9BA9C7",
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: "700",
   },
   activeLabel: {

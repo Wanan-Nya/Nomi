@@ -4,6 +4,7 @@ import {
   Animated,
   FlatList,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -144,10 +145,12 @@ export function ChatScreen({ onScrollDirection }: Props) {
   const [touching, setTouching] = useState(false);
   const [showToolbar, setShowToolbar] = useState(false);
   const [toolbarMounted, setToolbarMounted] = useState(false);
+  const [keyboardInset, setKeyboardInset] = useState(0);
   const listRef = useRef<FlatList<ChatMessage> | null>(null);
   const lastScrollY = useRef(0);
   const toolbarTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toolbarAnim = useRef(new Animated.Value(0)).current;
+  const scrollGestureRef = useRef(false);
 
   const assistantName = settings.aiName.trim() || "AI";
   const chatModels = useMemo(
@@ -169,6 +172,23 @@ export function ChatScreen({ onScrollDirection }: Props) {
       if (toolbarTimer.current) {
         clearTimeout(toolbarTimer.current);
       }
+    };
+  }, []);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+
+    const showSub = Keyboard.addListener(showEvent, (event) => {
+      setKeyboardInset(event.endCoordinates.height);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardInset(0);
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
     };
   }, []);
 
@@ -229,6 +249,40 @@ export function ChatScreen({ onScrollDirection }: Props) {
       setShowToolbar(true);
     }, 120);
   }, []);
+
+  const handleSurfaceTouchStart = useCallback(() => {
+    setTouching(true);
+    setShowToolbar(false);
+  }, []);
+
+  const handleSurfaceTouchEnd = useCallback(() => {
+    if (scrollGestureRef.current) {
+      setTouching(false);
+      setShowToolbar(Boolean(focusedMessageId) || selectedMessageIds.length > 0);
+      scrollGestureRef.current = false;
+      return;
+    }
+
+    setTouching(false);
+    setFocusedMessageId(null);
+    setShowToolbar(false);
+  }, [focusedMessageId, selectedMessageIds.length]);
+
+  const handleScrollBeginDrag = useCallback(() => {
+    scrollGestureRef.current = true;
+    setTouching(true);
+    setShowToolbar(false);
+  }, []);
+
+  const handleScrollEndDrag = useCallback(() => {
+    if (!scrollGestureRef.current) {
+      return;
+    }
+
+    setTouching(false);
+    setShowToolbar(Boolean(focusedMessageId) || selectedMessageIds.length > 0);
+    scrollGestureRef.current = false;
+  }, [focusedMessageId, selectedMessageIds.length]);
 
   const renderMessage = useCallback(
     ({ item }: { item: ChatMessage }) => (
@@ -293,15 +347,6 @@ export function ChatScreen({ onScrollDirection }: Props) {
       baseMessages: messages.slice(0, userIndex),
       replayMessage: messages[userIndex],
     };
-  }
-
-  function hideToolbar() {
-    setTouching(false);
-    if (!multiSelectMode) {
-      setShowToolbar(Boolean(focusedMessageId));
-    } else {
-      setShowToolbar(selectedMessageIds.length > 0);
-    }
   }
 
   async function submitConversation(baseMessages: ChatMessage[], userMessage: ChatMessage) {
@@ -518,11 +563,9 @@ export function ChatScreen({ onScrollDirection }: Props) {
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={0}>
       <View
         style={styles.surface}
-        onTouchStart={() => {
-          setTouching(true);
-          setShowToolbar(false);
-        }}
-        onTouchEnd={hideToolbar}
+        onTouchStart={handleSurfaceTouchStart}
+        onTouchEnd={handleSurfaceTouchEnd}
+        onTouchCancel={handleSurfaceTouchEnd}
       >
         {error ? (
           <View style={styles.errorBox}>
@@ -538,76 +581,82 @@ export function ChatScreen({ onScrollDirection }: Props) {
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          onScrollBeginDrag={handleScrollBeginDrag}
+          onScrollEndDrag={handleScrollEndDrag}
+          onMomentumScrollEnd={handleScrollEndDrag}
           onScroll={(event) => updateScrollDirection(event.nativeEvent.contentOffset.y)}
           scrollEventThrottle={16}
           ListFooterComponent={<View style={styles.listFooter} />}
         />
 
-        <View style={styles.composer}>
-          {attachments.length ? (
-            <View style={styles.attachmentStrip}>
-              <View style={styles.attachmentHeader}>
-                <Text style={styles.attachmentTitle}>已添加附件</Text>
-                <Pressable onPress={() => setAttachments([])} style={styles.attachmentClearButton}>
-                  <Text style={styles.attachmentClearText}>清空</Text>
-                </Pressable>
-              </View>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.attachmentList}>
-                {attachments.map((attachment) => (
-                  <View key={attachment.id} style={styles.attachmentChip}>
-                    {attachment.kind === "image" ? <Image source={{ uri: attachment.uri }} style={styles.attachmentThumb} /> : null}
-                    <Text style={styles.attachmentChipText} numberOfLines={1}>
-                      {attachmentLabel(attachment)}
-                    </Text>
-                    <Pressable onPress={() => removeAttachment(attachment.id)} hitSlop={8}>
-                      <Text style={styles.attachmentRemove}>×</Text>
-                    </Pressable>
-                  </View>
-                ))}
-              </ScrollView>
-            </View>
-          ) : null}
-
-          <View style={styles.modelRow}>
-            <Text style={styles.modelLabel}>当前模型</Text>
+        <View style={[styles.composerStack, keyboardInset > 0 && { paddingBottom: Math.max(0, keyboardInset - 16) }]}>
+          <View style={styles.modelCard}>
+            <Text style={styles.modelLabel}>褰撳墠妯″瀷</Text>
             <Pressable onPress={() => setModelMenuOpen(true)} style={styles.modelButton}>
               <Text style={styles.modelButtonText} numberOfLines={1}>
                 {currentModelLabel}
               </Text>
-              <Text style={styles.modelButtonChevron}>⌄</Text>
+              <Text style={styles.modelButtonChevron}>▾</Text>
             </Pressable>
           </View>
 
-          <View style={styles.composerRow}>
-            <Pressable onPress={handleAddAttachment} style={styles.attachButton}>
-              <Text style={styles.attachButtonText}>＋</Text>
-            </Pressable>
-            <TextInput
-              value={input}
-              onChangeText={setInput}
-              onContentSizeChange={(event) => {
-                const nextHeight = Math.min(112, Math.max(44, event.nativeEvent.contentSize.height));
-                setInputHeight(nextHeight);
-              }}
-              placeholder="输入消息、上传图片或文件"
-              placeholderTextColor="#8294BA"
-              style={[styles.input, { height: inputHeight }]}
-              multiline
-              scrollEnabled={inputHeight >= 112}
-              returnKeyType="default"
-              blurOnSubmit={false}
-              editable={!sending}
-            />
-            <Pressable
-              onPress={() => void handleSend()}
-              disabled={!canSend}
-              style={({ pressed }) => [styles.sendButton, pressed && styles.sendButtonPressed, !canSend && styles.sendButtonDisabled]}
-            >
-              <Text style={styles.sendButtonText}>{sending ? "..." : "发送"}</Text>
-            </Pressable>
+          <View style={styles.inputCard}>
+            {attachments.length ? (
+              <View style={styles.attachmentStrip}>
+                <View style={styles.attachmentHeader}>
+                  <Text style={styles.attachmentTitle}>宸叉坊鍔犻檮浠?</Text>
+                  <Pressable onPress={() => setAttachments([])} style={styles.attachmentClearButton}>
+                    <Text style={styles.attachmentClearText}>娓呯┖</Text>
+                  </Pressable>
+                </View>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.attachmentList}>
+                  {attachments.map((attachment) => (
+                    <View key={attachment.id} style={styles.attachmentChip}>
+                      {attachment.kind === "image" ? <Image source={{ uri: attachment.uri }} style={styles.attachmentThumb} /> : null}
+                      <Text style={styles.attachmentChipText} numberOfLines={1}>
+                        {attachmentLabel(attachment)}
+                      </Text>
+                      <Pressable onPress={() => removeAttachment(attachment.id)} hitSlop={8}>
+                        <Text style={styles.attachmentRemove}>×</Text>
+                      </Pressable>
+                    </View>
+                  ))}
+                </ScrollView>
+              </View>
+            ) : null}
+
+            <View style={styles.composerRow}>
+              <Pressable onPress={handleAddAttachment} style={styles.attachButton}>
+                <Text style={styles.attachButtonText}>＋</Text>
+              </Pressable>
+              <TextInput
+                value={input}
+                onChangeText={setInput}
+                onContentSizeChange={(event) => {
+                  const nextHeight = Math.min(112, Math.max(44, event.nativeEvent.contentSize.height));
+                  setInputHeight(nextHeight);
+                }}
+                placeholder="杈撳叆娑堟伅銆佷笂浼犲浘鐗囨垨鏂囦欢"
+                placeholderTextColor="#8294BA"
+                style={[styles.input, { height: inputHeight }]}
+                multiline
+                scrollEnabled={inputHeight >= 112}
+                returnKeyType="send"
+                submitBehavior="submit"
+                onSubmitEditing={() => void handleSend()}
+                blurOnSubmit={false}
+                editable={!sending}
+              />
+              <Pressable
+                onPress={() => void handleSend()}
+                disabled={!canSend}
+                style={({ pressed }) => [styles.sendButton, pressed && styles.sendButtonPressed, !canSend && styles.sendButtonDisabled]}
+              >
+                <Text style={styles.sendButtonText}>{sending ? "..." : "发送"}</Text>
+              </Pressable>
+            </View>
           </View>
         </View>
-
         {toolbarMounted && focusedMessageId ? (
           <Animated.View
             pointerEvents="box-none"
@@ -720,6 +769,25 @@ const styles = StyleSheet.create({
   },
   listFooter: {
     height: 8,
+  },
+  composerStack: {
+    gap: 10,
+  },
+  modelCard: {
+    gap: 6,
+    padding: 10,
+    borderRadius: 22,
+    backgroundColor: "rgba(10, 18, 36, 0.88)",
+    borderWidth: 1,
+    borderColor: "rgba(130, 150, 220, 0.18)",
+  },
+  inputCard: {
+    gap: 10,
+    padding: 10,
+    borderRadius: 24,
+    backgroundColor: "rgba(6, 12, 24, 0.78)",
+    borderWidth: 1,
+    borderColor: "rgba(146, 171, 255, 0.14)",
   },
   composer: {
     gap: 10,

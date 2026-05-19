@@ -10,6 +10,9 @@
 - 记忆与事项簿支持批量管理，操作面板改为底部动画弹出。
 - 聊天气泡补齐左右尖角，并与头像方向保持一致。
 
+- Auto-clear prompt and reference images after a successful image generation.
+- The history panel is now collapsed by default at the bottom of the image screen.
+- The history cards support long-press multi-select and batch delete.
 ### 优化
 - 全局顶部导航栏进一步收窄并上移，减少状态栏空白。
 - 所有页面顶部内容统一对齐到导航栏下方，去掉页面内重复的介绍和返回块。

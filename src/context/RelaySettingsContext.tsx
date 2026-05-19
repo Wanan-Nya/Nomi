@@ -199,8 +199,8 @@ function normalizeSettings(partial?: Partial<RelaySettings> | null): RelaySettin
     activeImageModelId: imageCard.id,
     chat: resolveConnection(chatCard, "chat"),
     image: resolveConnection(imageCard, "image"),
-    aiName: trim(partial.aiName) || defaultSettings.aiName,
-    persona: trim(partial.persona) || defaultSettings.persona,
+    aiName: partial.aiName !== undefined && partial.aiName !== null ? trim(partial.aiName) : defaultSettings.aiName,
+    persona: partial.persona !== undefined && partial.persona !== null ? trim(partial.persona) : defaultSettings.persona,
     chatBackgroundUri: trim(partial.chatBackgroundUri),
     userAvatarUri: trim(partial.userAvatarUri),
     aiAvatarUri: trim(partial.aiAvatarUri),
@@ -391,11 +391,11 @@ export function RelaySettingsProvider({ children }: { children: React.ReactNode 
   );
 
   const setAiName = useCallback((value: string) => {
-    commit((current) => ({ ...current, aiName: trim(value) || defaultSettings.aiName }));
+    commit((current) => ({ ...current, aiName: trim(value) }));
   }, [commit]);
 
   const setPersona = useCallback((value: string) => {
-    commit((current) => ({ ...current, persona: trim(value) || defaultSettings.persona }));
+    commit((current) => ({ ...current, persona: trim(value) }));
   }, [commit]);
 
   const setChatBackgroundUri = useCallback((value: string) => {
