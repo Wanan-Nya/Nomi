@@ -12,11 +12,11 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as ImagePicker from "expo-image-picker";
 import * as MediaLibrary from "expo-media-library";
-import { Buffer } from "buffer";
 import { File, Paths } from "expo-file-system";
 
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { useRelaySettings } from "@/context/RelaySettingsContext";
+import { useScrollChromeReporter, type ScrollChromeState } from "@/hooks/useScrollChromeReporter";
 import { editImage, generateImage } from "@/services/relayApi";
 import { ImageGenerationResult, ImageOutputFormat, ImageQuality, ImageResponseFormat, ImageSize } from "@/types";
 
@@ -100,8 +100,7 @@ async function materializeResult(result: ImageGenerationResult, outputFormat: Im
     const bytes = new Uint8Array(await response.arrayBuffer());
     file.write(bytes);
   } else if (result.b64_json) {
-    const bytes = Buffer.from(result.b64_json, "base64");
-    file.write(bytes);
+    file.write(result.b64_json, { encoding: "base64" });
   } else {
     throw new Error("没有可保存的图片内容。");
   }
@@ -136,10 +135,10 @@ function thumbnailUri(result?: ImageGenerationResult | null) {
 }
 
 type Props = {
-  onScrollDirection?: (direction: "up" | "down") => void;
+  onScrollState?: (state: ScrollChromeState) => void;
 };
 
-export function ImageScreen({ onScrollDirection }: Props) {
+export function ImageScreen({ onScrollState }: Props) {
   const { settings } = useRelaySettings();
   const [mode, setMode] = useState<Mode>("generate");
   const [prompt, setPrompt] = useState("");
@@ -149,16 +148,16 @@ export function ImageScreen({ onScrollDirection }: Props) {
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [selectedImages, setSelectedImages] = useState<SelectedImage[]>([]);
-  const [size, setSize] = useState<ImageSize>("1536x1024");
-  const [quality, setQuality] = useState<ImageQuality>("high");
+  const [size, setSize] = useState<ImageSize>("1024x1024");
+  const [quality, setQuality] = useState<ImageQuality>("medium");
   const [responseFormat, setResponseFormat] = useState<ImageResponseFormat>("url");
   const [outputFormat, setOutputFormat] = useState<ImageOutputFormat>("png");
   const [history, setHistory] = useState<ImageHistoryEntry[]>([]);
-  const [scrollY, setScrollY] = useState(0);
   const [previewAspectRatio, setPreviewAspectRatio] = useState<number | null>(null);
   const [historyExpanded, setHistoryExpanded] = useState(false);
   const [selectedHistoryIds, setSelectedHistoryIds] = useState<string[]>([]);
   const modeHint = mode === "generate" ? "直接生成一张新图" : `已选择 ${selectedImages.length} 张参考图`;
+  const reportScrollState = useScrollChromeReporter(onScrollState);
 
   useEffect(() => {
     AsyncStorage.getItem(HISTORY_KEY)
@@ -380,12 +379,7 @@ export function ImageScreen({ onScrollDirection }: Props) {
       contentContainerStyle={styles.container}
       showsVerticalScrollIndicator={false}
       onScroll={(event) => {
-        const y = event.nativeEvent.contentOffset.y;
-        const delta = y - scrollY;
-        if (Math.abs(delta) > 12) {
-          onScrollDirection?.(delta > 0 ? "up" : "down");
-        }
-        setScrollY(y);
+        reportScrollState(event.nativeEvent.contentOffset.y);
       }}
       scrollEventThrottle={16}
     >
@@ -446,6 +440,26 @@ export function ImageScreen({ onScrollDirection }: Props) {
         </View>
       ) : null}
 
+      <View style={styles.card}>
+        <Text style={styles.label}>{mode === "generate" ? "提示词" : "编辑说明"}</Text>
+        <TextInput
+          value={prompt}
+          onChangeText={setPrompt}
+          multiline
+          style={styles.input}
+          placeholder={mode === "generate" ? "描述你想生成的图片" : "比如：参考这张图的构图，把主体改成夜景插画风"}
+          placeholderTextColor="#7182A4"
+        />
+
+        <View style={styles.bottomActions}>
+          {mode === "edit" ? (
+            <PrimaryButton title={loading ? "生成中..." : "开始生成"} onPress={() => void runGeneration("edit")} loading={loading} disabled={!canUseEdit} />
+          ) : (
+            <PrimaryButton title={loading ? "生成中..." : "开始生成"} onPress={() => void runGeneration("generate")} loading={loading} />
+          )}
+        </View>
+      </View>
+
       <View style={styles.preview}>
         <View style={styles.previewHeader}>
           <Text style={styles.previewTitle}>预览</Text>
@@ -470,32 +484,7 @@ export function ImageScreen({ onScrollDirection }: Props) {
           </View>
         )}
 
-      {result?.revised_prompt ? <Text style={styles.helper}>模型改写后的提示词：{result.revised_prompt}</Text> : null}
-      </View>
-
-      <View style={styles.card}>
-        <Text style={styles.label}>{mode === "generate" ? "提示词" : "编辑说明"}</Text>
-        <TextInput
-          value={prompt}
-          onChangeText={setPrompt}
-          multiline
-          style={styles.input}
-          placeholder={mode === "generate" ? "描述你想生成的图片" : "比如：参考这张图的构图，把主体改成夜景插画风"}
-          placeholderTextColor="#7182A4"
-        />
-
-        <View style={styles.bottomActions}>
-          {mode === "edit" ? (
-            <PrimaryButton title={loading ? "编辑中..." : "开始编辑"} onPress={() => void runGeneration("edit")} loading={loading} disabled={!canUseEdit} />
-          ) : (
-            <PrimaryButton title={loading ? "生成中..." : "开始生成"} onPress={() => void runGeneration("generate")} loading={loading} />
-          )}
-          {mode === "edit" ? (
-            <Pressable onPress={handlePickImages} style={styles.secondaryButton}>
-              <Text style={styles.secondaryButtonText}>添加参考图</Text>
-            </Pressable>
-          ) : null}
-        </View>
+        {result?.revised_prompt ? <Text style={styles.helper}>模型改写后的提示词：{result.revised_prompt}</Text> : null}
       </View>
 
       <View style={styles.card}>

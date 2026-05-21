@@ -65,7 +65,7 @@ try {
     Select-Object -First 1
 
   if ($apk) {
-    $targetName = "nomi-mobile-0.3.4-release.apk"
+    $targetName = "nomi-mobile-0.3.7-release.apk"
     $targetPath = Join-Path $artifactDir $targetName
     Copy-Item -LiteralPath $apk.FullName -Destination $targetPath -Force
     Write-Host "APK ready: $targetPath"

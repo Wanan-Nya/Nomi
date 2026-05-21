@@ -2,7 +2,7 @@ import { openDatabaseAsync, type SQLiteDatabase } from "expo-sqlite";
 import { File, Paths } from "expo-file-system";
 
 import { RelayConnectionSettings } from "@/context/RelaySettingsContext";
-import { ChatMessage } from "@/types";
+import { ChatMessage, TaskItem } from "@/types";
 import { sendChatMessage } from "@/services/relayApi";
 
 export type MemoryKind = "preference" | "profile" | "project" | "fact";
@@ -61,6 +61,8 @@ export type MemoryExportPayload = {
 
 const DB_NAME = "nomi_long_term_memory.db";
 const SUMMARY_KEY = "conversation_summary";
+const MEMORY_REFRESH_COUNTER_KEY = "conversation_rounds_since_memory_refresh";
+const MEMORY_REFRESH_INTERVAL_ROUNDS = 10;
 const MAX_MEMORY_ITEMS = 200;
 const CLEANUP_KEEP_AFTER_DAYS = 90;
 const CLEANUP_IMPORTANT_AFTER_DAYS = 60;
@@ -131,6 +133,98 @@ function normalizeMemoryContent(value: string) {
     .replace(/[。！？!?；;，,]+$/g, "");
 }
 
+function tokenizeComparisonText(value: string) {
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return [];
+  }
+
+  const tokens = new Set<string>();
+  const chunks = normalized.split(/[^a-z0-9\u4e00-\u9fa5]+/i).filter(Boolean);
+  for (const chunk of chunks) {
+    if (chunk.length >= 2) {
+      tokens.add(chunk);
+    }
+  }
+
+  for (let index = 0; index < normalized.length - 1; index += 1) {
+    tokens.add(normalized.slice(index, index + 2));
+  }
+
+  return [...tokens].slice(0, 48);
+}
+
+function similarityScore(left: string, right: string) {
+  const normalizedLeft = normalizeMemoryContent(left);
+  const normalizedRight = normalizeMemoryContent(right);
+  if (!normalizedLeft || !normalizedRight) {
+    return 0;
+  }
+
+  if (normalizedLeft === normalizedRight) {
+    return 1;
+  }
+
+  if (normalizedLeft.includes(normalizedRight) || normalizedRight.includes(normalizedLeft)) {
+    return 0.92;
+  }
+
+  const leftTokens = new Set(tokenizeComparisonText(normalizedLeft));
+  const rightTokens = new Set(tokenizeComparisonText(normalizedRight));
+  if (!leftTokens.size || !rightTokens.size) {
+    return 0;
+  }
+
+  let intersection = 0;
+  for (const token of leftTokens) {
+    if (rightTokens.has(token)) {
+      intersection += 1;
+    }
+  }
+
+  const union = leftTokens.size + rightTokens.size - intersection;
+  return union > 0 ? intersection / union : 0;
+}
+
+function chooseMergedMemoryContent(left: string, right: string) {
+  const normalizedLeft = normalizeMemoryContent(left);
+  const normalizedRight = normalizeMemoryContent(right);
+
+  if (!normalizedLeft) {
+    return normalizedRight;
+  }
+
+  if (!normalizedRight) {
+    return normalizedLeft;
+  }
+
+  if (normalizedLeft.includes(normalizedRight)) {
+    return normalizedLeft.length >= normalizedRight.length ? normalizedLeft : normalizedRight;
+  }
+
+  if (normalizedRight.includes(normalizedLeft)) {
+    return normalizedRight.length >= normalizedLeft.length ? normalizedRight : normalizedLeft;
+  }
+
+  return normalizedLeft.length >= normalizedRight.length ? normalizedLeft : normalizedRight;
+}
+
+function mergeMemoryDrafts(base: MemoryDraft, next: MemoryDraft): MemoryDraft {
+  return {
+    kind: base.kind,
+    content: chooseMergedMemoryContent(base.content, next.content),
+    importance: Math.max(clampImportance(base.importance), clampImportance(next.importance)),
+    tags: Array.from(new Set([...base.tags, ...next.tags])).slice(0, 6),
+    source: base.source || next.source,
+    createdAt: Math.min(base.createdAt || now(), next.createdAt || now()),
+    updatedAt: now(),
+  };
+}
+
+function isSimilarMemoryDraft(left: MemoryDraft, right: MemoryDraft) {
+  return left.kind === right.kind && similarityScore(left.content, right.content) >= 0.5;
+}
+
 function isEphemeralMemoryContent(content: string) {
   const normalized = normalizeMemoryContent(content);
   if (normalized.length < 4 || normalized.length > 120) {
@@ -152,7 +246,6 @@ function isEphemeralMemoryContent(content: string) {
 }
 
 function dedupeMemoryItems(items: MemoryDraft[]) {
-  const seen = new Set<string>();
   const result: MemoryDraft[] = [];
 
   for (const item of items) {
@@ -161,18 +254,20 @@ function dedupeMemoryItems(items: MemoryDraft[]) {
       continue;
     }
 
-    const fingerprint = makeFingerprint(item.kind, content);
-    if (seen.has(fingerprint)) {
-      continue;
-    }
-
-    seen.add(fingerprint);
-    result.push({
+    const normalizedItem: MemoryDraft = {
       ...item,
       content,
       importance: clampImportance(item.importance),
-      tags: item.tags.slice(0, 4),
-    });
+      tags: Array.from(new Set(item.tags)).slice(0, 6),
+    };
+
+    const existingIndex = result.findIndex((candidate) => isSimilarMemoryDraft(candidate, normalizedItem));
+    if (existingIndex >= 0) {
+      result[existingIndex] = mergeMemoryDrafts(result[existingIndex], normalizedItem);
+      continue;
+    }
+
+    result.push(normalizedItem);
   }
 
   return result;
@@ -338,6 +433,29 @@ async function setSummary(summary: string) {
   );
 }
 
+async function getMemoryRefreshRounds() {
+  const db = await getDatabase();
+  const row = await db.getFirstAsync<MemoryStateRow>(
+    "SELECT value FROM memory_state WHERE key = ? LIMIT 1",
+    [MEMORY_REFRESH_COUNTER_KEY]
+  );
+  return Math.max(0, Number(row?.value ?? 0) || 0);
+}
+
+async function setMemoryRefreshRounds(value: number) {
+  const db = await getDatabase();
+  await db.runAsync(
+    `
+      INSERT INTO memory_state (key, value, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET
+        value = excluded.value,
+        updated_at = excluded.updated_at
+    `,
+    [MEMORY_REFRESH_COUNTER_KEY, String(Math.max(0, value)), now()]
+  );
+}
+
 async function listMemoryItems(limit = 200) {
   const db = await getDatabase();
   const rows = await db.getAllAsync<MemoryItemRow>(
@@ -382,6 +500,43 @@ async function markMemoryItemsReferenced(fingerprints: string[]) {
   );
 }
 
+async function deleteMemoryItemsByFingerprints(fingerprints: string[]) {
+  if (!fingerprints.length) {
+    return;
+  }
+
+  const db = await getDatabase();
+  await db.runAsync(`DELETE FROM memory_items WHERE fingerprint IN (${buildPlaceholders(fingerprints.length)})`, fingerprints);
+}
+
+async function mergeMemoryDraftWithStored(item: MemoryDraft) {
+  const existing = await listMemoryItems(MAX_MEMORY_ITEMS);
+  const matches = existing
+    .filter((candidate) => candidate.kind === item.kind)
+    .filter((candidate) => isSimilarMemoryDraft(candidate, item));
+
+  if (!matches.length) {
+    return item;
+  }
+
+  const merged = matches.reduce<MemoryDraft>(
+    (accumulator, candidate) =>
+      mergeMemoryDrafts(accumulator, {
+        kind: candidate.kind,
+        content: candidate.content,
+        importance: candidate.importance,
+        tags: candidate.tags,
+        source: candidate.source,
+        createdAt: candidate.createdAt,
+        updatedAt: candidate.updatedAt,
+      }),
+    item
+  );
+
+  await deleteMemoryItemsByFingerprints(matches.map((candidate) => candidate.fingerprint));
+  return merged;
+}
+
 async function upsertMemoryItems(items: MemoryDraft[]) {
   if (!items.length) {
     return;
@@ -396,7 +551,11 @@ async function upsertMemoryItems(items: MemoryDraft[]) {
       continue;
     }
 
-    const fingerprint = makeFingerprint(item.kind, content);
+    const mergedDraft = await mergeMemoryDraftWithStored({
+      ...item,
+      content,
+    });
+    const fingerprint = makeFingerprint(mergedDraft.kind, mergedDraft.content);
     await db.runAsync(
       `
         INSERT INTO memory_items (
@@ -422,14 +581,14 @@ async function upsertMemoryItems(items: MemoryDraft[]) {
       `,
       [
         fingerprint,
-        item.kind,
-        content,
-        JSON.stringify(item.tags.slice(0, 6)),
-        clampImportance(item.importance),
-        item.source,
-        item.createdAt || timestamp,
+        mergedDraft.kind,
+        mergedDraft.content,
+        JSON.stringify(mergedDraft.tags.slice(0, 6)),
+        clampImportance(mergedDraft.importance),
+        mergedDraft.source,
+        mergedDraft.createdAt || timestamp,
         timestamp,
-        item.updatedAt || timestamp,
+        mergedDraft.updatedAt || timestamp,
         0,
       ]
     );
@@ -500,16 +659,44 @@ function buildMemoryPrompt(summary: string, memories: MemoryItem[]) {
   return parts.join("\n\n");
 }
 
+function buildTaskPrompt(summary: string, tasks: TaskItem[]) {
+  const parts: string[] = [];
+
+  if (summary.trim()) {
+    parts.push(`Task board summary:\n${summary.trim()}`);
+  }
+
+  if (tasks.length) {
+    parts.push(
+      [
+        "Relevant tasks:",
+        ...tasks.map((item, index) => {
+          const dueText = item.dueText ? ` · ${item.dueText}` : "";
+          const note = item.note.trim() ? ` · ${shortenText(item.note, 80)}` : "";
+          return `${index + 1}. [${item.status}] ${shortenText(item.title, 60)}${dueText}${note}`;
+        }),
+      ].join("\n")
+    );
+  }
+
+  return parts.join("\n\n");
+}
+
 export function composeChatSystemPrompt(params: {
   assistantName: string;
   persona: string;
+  currentTime: string;
   summary: string;
   memories: MemoryItem[];
+  taskSummary: string;
+  tasks: TaskItem[];
 }) {
   const parts = [
     `You are ${params.assistantName}.`,
     "Always answer in Chinese. Keep the tone natural, clear, and concise.",
+    `Current time: ${params.currentTime}`,
     params.persona.trim() ? `Persona: ${params.persona.trim()}` : "",
+    buildTaskPrompt(params.taskSummary, params.tasks),
     buildMemoryPrompt(params.summary, params.memories),
     "Only use long-term memory when it is relevant to the current request.",
     "Do not invent details from memory. If memory is unclear, answer based on the current context.",
@@ -523,7 +710,7 @@ async function summarizeConversation(
   messages: ChatMessage[],
   currentSummary: string
 ) {
-  const recentDialogue = buildConversationWindow(messages, 10);
+  const recentDialogue = buildConversationWindow(messages, 20);
   if (!recentDialogue.trim()) {
     return currentSummary.trim();
   }
@@ -532,7 +719,7 @@ async function summarizeConversation(
     {
       role: "system",
       content:
-        "You are a conversation summarizer. Compress the latest dialogue into a short Chinese summary that can be used later as long-term memory. Keep only stable user preferences, project background, and important facts. Do not store API keys, passwords, verification codes, or other sensitive data. Output JSON only.",
+        "You are a conversation summarizer. Compress the latest dialogue into a short Chinese summary that can be used later as long-term memory. Keep only stable user preferences, project background, and important facts. Merge repeated or overlapping points into one concise statement. Do not store API keys, passwords, verification codes, or other sensitive data. Output JSON only.",
     },
     {
       role: "user",
@@ -558,7 +745,7 @@ async function extractMemoryCandidates(
   persona: string,
   messages: ChatMessage[]
 ) {
-  const recentDialogue = buildConversationWindow(messages, 10);
+  const recentDialogue = buildConversationWindow(messages, 20);
   if (!recentDialogue.trim()) {
     return [];
   }
@@ -567,7 +754,7 @@ async function extractMemoryCandidates(
     {
       role: "system",
       content:
-        "You are a long-term memory extractor. Extract only stable, reusable information from the latest dialogue. Do not store API keys, passwords, verification codes, temporary links, or one-time content. Output JSON only.",
+        "You are a long-term memory extractor. Extract only stable, reusable information from the latest dialogue. Merge near-duplicate ideas into one item instead of splitting them. Do not store API keys, passwords, verification codes, temporary links, or one-time content. Output JSON only.",
     },
     {
       role: "user",
@@ -588,20 +775,20 @@ async function extractMemoryCandidates(
 
   return dedupeMemoryItems(
     items
-    .filter((item): item is Required<Pick<ExtractedMemoryItem, "kind" | "content">> & ExtractedMemoryItem => {
-      return Boolean(item.kind && item.content && item.content.trim().length >= 4);
-    })
-    .map((item) => ({
-      kind: item.kind!,
-      content: shortenText(normalizeMemoryContent(item.content!), 180),
-      importance: Math.max(1, Math.min(5, Math.round(item.importance || 3))),
-      tags: Array.isArray(item.tags)
-        ? item.tags.filter((tag): tag is string => typeof tag === "string").slice(0, 6)
-        : [],
-      source: "conversation",
-      createdAt: now(),
-      updatedAt: now(),
-    }))
+      .filter((item): item is Required<Pick<ExtractedMemoryItem, "kind" | "content">> & ExtractedMemoryItem => {
+        return Boolean(item.kind && item.content && item.content.trim().length >= 4);
+      })
+      .map((item) => ({
+        kind: item.kind!,
+        content: shortenText(normalizeMemoryContent(item.content!), 180),
+        importance: Math.max(1, Math.min(5, Math.round(item.importance || 3))),
+        tags: Array.isArray(item.tags)
+          ? item.tags.filter((tag): tag is string => typeof tag === "string").slice(0, 6)
+          : [],
+        source: "conversation",
+        createdAt: now(),
+        updatedAt: now(),
+      }))
   );
 }
 
@@ -772,23 +959,24 @@ export async function refreshLongTermMemoryAfterReply(
   persona: string,
   messages: ChatMessage[]
 ) {
-  const currentSummary = await getSummary();
+  const nextRounds = (await getMemoryRefreshRounds()) + 1;
+  if (nextRounds < MEMORY_REFRESH_INTERVAL_ROUNDS) {
+    await setMemoryRefreshRounds(nextRounds);
+    return;
+  }
 
   try {
+    const currentSummary = await getSummary();
     const nextSummary = await summarizeConversation(config, messages, currentSummary);
     if (nextSummary.trim() && nextSummary.trim() !== currentSummary.trim()) {
       await setSummary(nextSummary);
     }
-  } catch {
-    // Summary refresh should never block the main chat flow.
-  }
-
-  try {
     const items = await extractMemoryCandidates(config, assistantName, persona, messages);
     await upsertMemoryItems(items);
     await cleanupLongTermMemory();
+    await setMemoryRefreshRounds(0);
   } catch {
-    // Memory extraction should never block the main chat flow.
+    await setMemoryRefreshRounds(MEMORY_REFRESH_INTERVAL_ROUNDS - 1);
   }
 }
 
@@ -796,4 +984,5 @@ export async function clearLongTermMemory() {
   const db = await getDatabase();
   await db.runAsync("DELETE FROM memory_items");
   await db.runAsync("DELETE FROM memory_state WHERE key = ?", [SUMMARY_KEY]);
+  await db.runAsync("DELETE FROM memory_state WHERE key = ?", [MEMORY_REFRESH_COUNTER_KEY]);
 }

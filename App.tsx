@@ -19,25 +19,24 @@ function MainApp() {
   const [mode, setMode] = useState<Mode>("chat");
   const [page, setPage] = useState<Page>("home");
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [chromeVisible, setChromeVisible] = useState(true);
   const backgroundSource = useMemo(
     () => (settings.chatBackgroundUri ? { uri: settings.chatBackgroundUri } : null),
     [settings.chatBackgroundUri]
   );
-  const chromeAnim = useRef(new Animated.Value(0)).current;
+  const chromeAnim = useRef(new Animated.Value(1)).current;
   const tabsAnim = useRef(new Animated.Value(0)).current;
   const menuRowAnim = useRef(new Animated.Value(1)).current;
   const modeAnim = useRef(new Animated.Value(0)).current;
   const lastBackPressRef = useRef(0);
 
   const statusBarOffset = Platform.OS === "android" ? StatusBar.currentHeight ?? 0 : 0;
-  const topBarHeight = statusBarOffset + 56;
-  const headerVisible = chromeVisible && !drawerOpen;
+  const fallbackChromeHeight = statusBarOffset + 56;
+  const [chromeHeight, setChromeHeight] = useState(fallbackChromeHeight);
+  const headerVisible = !drawerOpen;
 
   const activateMode = useCallback((nextMode: Mode) => {
     setDrawerOpen(false);
     setPage("home");
-    setChromeVisible(true);
     setMode(nextMode);
   }, []);
 
@@ -56,10 +55,6 @@ function MainApp() {
       useNativeDriver: true,
     }).start();
   }, [headerVisible, menuRowAnim]);
-
-  useEffect(() => {
-    setChromeVisible(true);
-  }, [page]);
 
   useEffect(() => {
     const shouldShowTabs = page === "home" && headerVisible;
@@ -88,13 +83,11 @@ function MainApp() {
       if (page !== "home") {
         setPage("home");
         setMode("chat");
-        setChromeVisible(true);
         return true;
       }
 
       if (mode !== "chat") {
         setMode("chat");
-        setChromeVisible(true);
         return true;
       }
 
@@ -151,17 +144,6 @@ function MainApp() {
     [activateMode, drawerOpen, mode, page]
   );
 
-  const handleScrollDirection = useCallback(
-    (direction: "up" | "down") => {
-      if (drawerOpen) {
-        return;
-      }
-
-      setChromeVisible(direction === "down");
-    },
-    [drawerOpen]
-  );
-
   if (!isReady) {
     return (
       <SafeAreaView style={styles.safe}>
@@ -200,7 +182,7 @@ function MainApp() {
           ]}
           pointerEvents={mode === "chat" ? "auto" : "none"}
         >
-          <ChatScreen onScrollDirection={handleScrollDirection} />
+          <ChatScreen visible={page === "home" && mode === "chat"} />
         </Animated.View>
         <Animated.View
           style={[
@@ -219,7 +201,7 @@ function MainApp() {
           ]}
           pointerEvents={mode === "image" ? "auto" : "none"}
         >
-          <ImageScreen onScrollDirection={handleScrollDirection} />
+          <ImageScreen />
         </Animated.View>
       </View>
     </View>
@@ -228,15 +210,15 @@ function MainApp() {
   const overlayScreen =
     page === "settings" ? (
       <View style={styles.screenOverlay} pointerEvents="auto">
-        <SettingsScreen onClose={() => setPage("home")} onScrollDirection={handleScrollDirection} />
+        <SettingsScreen onClose={() => setPage("home")} />
       </View>
     ) : page === "memory" ? (
       <View style={styles.screenOverlay} pointerEvents="auto">
-        <MemoryScreen onClose={() => setPage("home")} onScrollDirection={handleScrollDirection} />
+        <MemoryScreen onClose={() => setPage("home")} />
       </View>
     ) : page === "tasks" ? (
       <View style={styles.screenOverlay} pointerEvents="auto">
-        <TaskBoardScreen onClose={() => setPage("home")} onScrollDirection={handleScrollDirection} />
+        <TaskBoardScreen onClose={() => setPage("home")} />
       </View>
     ) : null;
 
@@ -247,13 +229,12 @@ function MainApp() {
         style={[
           styles.chrome,
           {
-            height: topBarHeight,
             opacity: chromeAnim,
             transform: [
               {
                 translateY: chromeAnim.interpolate({
                   inputRange: [0, 1],
-                  outputRange: [-topBarHeight, 0],
+                  outputRange: [-chromeHeight, 0],
                 }),
               },
             ],
@@ -261,7 +242,16 @@ function MainApp() {
         ]}
         pointerEvents={headerVisible ? "auto" : "none"}
       >
-        <View style={[styles.topBar, { paddingTop: statusBarOffset }]} pointerEvents="box-none">
+        <View
+          style={[styles.topBar, { paddingTop: statusBarOffset }]}
+          pointerEvents="box-none"
+          onLayout={(event) => {
+            const nextHeight = Math.ceil(event.nativeEvent.layout.height);
+            if (nextHeight > 0 && nextHeight !== chromeHeight) {
+              setChromeHeight(nextHeight);
+            }
+          }}
+        >
           <Animated.View
             style={[
               styles.topBarRow,
@@ -316,26 +306,12 @@ function MainApp() {
           </Animated.View>
         </View>
       </Animated.View>
-      <Animated.View
-        style={[
-          styles.screenWrap,
-          {
-            paddingTop: topBarHeight,
-            transform: [
-              {
-                translateY: chromeAnim.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [-topBarHeight, 0],
-                }),
-              },
-            ],
-          },
-        ]}
-        {...swipeResponder.panHandlers}
-      >
-        {homeScreen}
-        {overlayScreen}
-      </Animated.View>
+      <View style={[styles.screenWrap, { paddingTop: chromeHeight }]} {...swipeResponder.panHandlers}>
+        <View style={styles.screenContent}>
+          {homeScreen}
+          {overlayScreen}
+        </View>
+      </View>
     </>
   );
 
@@ -356,10 +332,6 @@ function MainApp() {
         onClose={() => setDrawerOpen(false)}
         onOpenChat={() => {
           setMode("chat");
-          setPage("home");
-        }}
-        onOpenImage={() => {
-          setMode("image");
           setPage("home");
         }}
         onOpenSettings={() => {
@@ -398,14 +370,15 @@ const styles = StyleSheet.create({
   },
   chrome: {
     position: "absolute",
+    top: 0,
     left: 0,
     right: 0,
-    top: 0,
     zIndex: 1000,
-    elevation: 1000,
+    elevation: 20,
     backgroundColor: "#081120",
     borderBottomWidth: 1,
     borderBottomColor: "rgba(146, 171, 255, 0.14)",
+    overflow: "hidden",
   },
   topBar: {
     paddingHorizontal: 16,
@@ -424,7 +397,10 @@ const styles = StyleSheet.create({
     height: 42,
   },
   screenWrap: {
-    ...StyleSheet.absoluteFillObject,
+    flex: 1,
+  },
+  screenContent: {
+    flex: 1,
   },
   homeStage: {
     flex: 1,

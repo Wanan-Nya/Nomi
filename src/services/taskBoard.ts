@@ -681,3 +681,87 @@ export async function extractTaskCandidates(
 
   return dedupeTaskItems(sanitizedItems);
 }
+
+function shouldCaptureTaskRequestSmart(text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  const requestPattern = /(?:帮我|麻烦|请|顺手|顺便|记一下|记录一下|添加|新增|加入|安排|设为|设成|提醒|帮忙)/i;
+  const taskPattern = /(?:待办|todo|任务|事项|清单|日程|备忘|提醒|事项簿)/i;
+  return requestPattern.test(trimmed) && taskPattern.test(trimmed);
+}
+
+function buildHeuristicTaskDraftsSmart(text: string) {
+  const normalized = text.trim();
+  if (!shouldCaptureTaskRequestSmart(normalized)) {
+    return [];
+  }
+
+  const lastUserLine =
+    normalized
+      .split(/\r?\n/)
+      .reverse()
+      .find((line) => /^User:\s*/i.test(line)) ?? normalized;
+  const source = lastUserLine.replace(/^User:\s*/i, "").trim();
+
+  const cleaned = source
+    .replace(/^(帮我|麻烦|请|顺手|顺便|记一下|记录一下|添加|新增|加入|安排|设为|设成|提醒|帮忙)([:：\s-]*)/i, "")
+    .replace(/^(待办|todo|任务|事项|清单|日程|备忘|提醒|事项簿)([:：\s-]*)/i, "")
+    .replace(/^[，。！？、\s-]+/g, "")
+    .trim();
+
+  if (!cleaned || cleaned.length < 2) {
+    return [];
+  }
+
+  return [
+    {
+      title: shortenText(cleaned, 48),
+      note: "",
+      priority: 3,
+      tags: [],
+    },
+  ];
+}
+
+export async function extractTaskCandidatesSmart(
+  config: RelayConnectionSettings,
+  assistantName: string,
+  persona: string,
+  messages: ChatMessage[]
+) {
+  const recentDialogue = buildConversationWindow(messages, 8);
+  const candidates = await extractTaskCandidates(config, assistantName, persona, messages).catch(() => []);
+  return dedupeTaskItems([...candidates, ...buildHeuristicTaskDraftsSmart(recentDialogue)]);
+}
+
+export async function refreshTaskBoardAfterReply(
+  config: RelayConnectionSettings,
+  assistantName: string,
+  persona: string,
+  messages: ChatMessage[]
+) {
+  const recentUserMessages = messages.filter((message) => message.role === "user");
+  const triggerText = recentUserMessages.length ? recentUserMessages[recentUserMessages.length - 1].content : "";
+  if (!shouldCaptureTaskRequestSmart(triggerText)) {
+    return;
+  }
+
+  const candidates = await extractTaskCandidatesSmart(config, assistantName, persona, messages).catch(() => []);
+  if (!candidates.length) {
+    return;
+  }
+
+  for (const candidate of candidates) {
+    await createTaskItem({
+      title: candidate.title,
+      note: candidate.note ?? "",
+      dueText: candidate.dueText,
+      priority: candidate.priority ?? 3,
+      tags: candidate.tags ?? [],
+      source: "conversation",
+    });
+  }
+}

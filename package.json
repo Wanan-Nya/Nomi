@@ -1,6 +1,6 @@
 {
   "name": "nomi-mobile",
-  "version": "0.3.4",
+  "version": "0.3.7",
   "private": true,
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
