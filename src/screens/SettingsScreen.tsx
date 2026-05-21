@@ -1,8 +1,9 @@
-import React, { memo, useMemo, useState } from "react";
+﻿import React, { memo, useMemo, useState } from "react";
 import { Alert, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 
 import { useRelaySettings } from "@/context/RelaySettingsContext";
+import { useScrollChromeReporter, type ScrollChromeState } from "@/hooks/useScrollChromeReporter";
 
 type FieldProps = {
   label: string;
@@ -123,7 +124,7 @@ type ModelDraft = {
 
 type Props = {
   onClose: () => void;
-  onScrollDirection?: (direction: "up" | "down") => void;
+  onScrollState?: (state: ScrollChromeState) => void;
 };
 
 function emptyDraft(): ModelDraft {
@@ -136,7 +137,7 @@ function emptyDraft(): ModelDraft {
   };
 }
 
-export function SettingsScreen({ onScrollDirection }: Props) {
+export function SettingsScreen({ onScrollState }: Props) {
   const {
     settings,
     addModelCard,
@@ -150,11 +151,11 @@ export function SettingsScreen({ onScrollDirection }: Props) {
     setUserAvatarUri,
     setAiAvatarUri,
   } = useRelaySettings();
-  const [scrollY, setScrollY] = useState(0);
   const [editorVisible, setEditorVisible] = useState(false);
   const [editorMode, setEditorMode] = useState<"chat" | "image">("chat");
   const [draft, setDraft] = useState<ModelDraft>(emptyDraft);
   const [editorTitle, setEditorTitle] = useState("");
+  const reportScrollState = useScrollChromeReporter(onScrollState);
 
   const chatModels = useMemo(
     () => settings.models.filter((model) => model.id !== settings.activeImageModelId),
@@ -267,12 +268,7 @@ export function SettingsScreen({ onScrollDirection }: Props) {
       contentContainerStyle={styles.scrollContent}
       showsVerticalScrollIndicator={false}
       onScroll={(event) => {
-        const y = event.nativeEvent.contentOffset.y;
-        const delta = y - scrollY;
-        if (Math.abs(delta) > 12) {
-          onScrollDirection?.(delta > 0 ? "up" : "down");
-        }
-        setScrollY(y);
+        reportScrollState(event.nativeEvent.contentOffset.y);
       }}
       scrollEventThrottle={16}
     >
@@ -404,7 +400,12 @@ export function SettingsScreen({ onScrollDirection }: Props) {
           <Pressable style={styles.modalCard} onPress={() => null}>
             <Text style={styles.modalTitle}>{editorTitle}</Text>
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.modalContent}>
-              <Field label="自定义名称" value={draft.name} onChange={(value) => setDraft((current) => ({ ...current, name: value }))} placeholder="模型名称" />
+              <Field
+                label="自定义名称"
+                value={draft.name}
+                onChange={(value) => setDraft((current) => ({ ...current, name: value }))}
+                placeholder="模型名称"
+              />
               <Field
                 label="Base URL"
                 value={draft.baseUrl}
@@ -418,18 +419,21 @@ export function SettingsScreen({ onScrollDirection }: Props) {
                 placeholder="输入密钥"
                 secureTextEntry
               />
-              <Field
-                label="聊天模型"
-                value={draft.chatModel}
-                onChange={(value) => setDraft((current) => ({ ...current, chatModel: value }))}
-                placeholder="gpt-4o-mini"
-              />
-              <Field
-                label="作图模型"
-                value={draft.imageModel}
-                onChange={(value) => setDraft((current) => ({ ...current, imageModel: value }))}
-                placeholder="gpt-image-2"
-              />
+              {editorMode === "chat" ? (
+                <Field
+                  label="聊天模型"
+                  value={draft.chatModel}
+                  onChange={(value) => setDraft((current) => ({ ...current, chatModel: value }))}
+                  placeholder="gpt-4o-mini"
+                />
+              ) : (
+                <Field
+                  label="作图模型"
+                  value={draft.imageModel}
+                  onChange={(value) => setDraft((current) => ({ ...current, imageModel: value }))}
+                  placeholder="gpt-image-2"
+                />
+              )}
             </ScrollView>
             <View style={styles.modalActions}>
               <Pressable onPress={() => setEditorVisible(false)} style={styles.modalGhostButton}>
@@ -699,3 +703,4 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
 });
+

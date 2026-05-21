@@ -21,6 +21,7 @@ import * as ImagePicker from "expo-image-picker";
 import { ChatBubble } from "@/components/ChatBubble";
 import { useRelaySettings } from "@/context/RelaySettingsContext";
 import { useScrollChromeReporter, type ScrollChromeState } from "@/hooks/useScrollChromeReporter";
+import { canExtractAttachmentText, extractAttachmentText } from "@/services/attachmentText";
 import {
   composeChatSystemPrompt,
   getMemoryContext,
@@ -52,22 +53,6 @@ type Props = {
   visible?: boolean;
   onScrollState?: (state: ScrollChromeState) => void;
 };
-
-function isTextLikeFile(name: string, mimeType: string) {
-  if (mimeType.startsWith("text/")) {
-    return true;
-  }
-
-  return /\.(txt|md|json|csv|xml|html|htm|yml|yaml|js|ts|tsx|jsx|css|py|java|c|cpp|log)$/i.test(name);
-}
-
-async function readFileText(uri: string) {
-  try {
-    return await new File(uri).text();
-  } catch {
-    return "";
-  }
-}
 
 async function uriToDataUri(uri: string, mimeType: string) {
   if (/^data:|^https?:/i.test(uri)) {
@@ -104,6 +89,10 @@ function buildAttachmentContext(attachments: ChatAttachment[]) {
       return `[文件] ${attachment.name} (${attachment.mimeType})`;
     })
     .join("\n\n");
+}
+
+function supportsChatImages(modelName: string) {
+  return !/deepseek/i.test(modelName);
 }
 
 function sanitizeStoredMessage(message: ChatMessage): ChatMessage | null {
@@ -202,10 +191,33 @@ function buildCurrentTimeLabel() {
   )}`;
 }
 
-async function convertMessageToContent(message: ChatMessage): Promise<string | RelayChatContentPart[]> {
+async function convertMessageToContent(
+  message: ChatMessage,
+  options: {
+    allowImages: boolean;
+  }
+): Promise<string | RelayChatContentPart[]> {
   const attachments = message.attachments ?? [];
   if (!attachments.length) {
     return message.content;
+  }
+
+  if (!options.allowImages) {
+    const textParts = [message.content.trim() || "请结合附件回答。"];
+    for (const attachment of attachments) {
+      if (attachment.kind === "image") {
+        textParts.push(`[图片] ${attachment.name}`);
+        continue;
+      }
+
+      textParts.push(
+        attachment.text?.trim()
+          ? `[文件 ${attachment.name}]\n${attachment.text.trim()}`
+          : `[文件 ${attachment.name}，类型 ${attachment.mimeType}]`
+      );
+    }
+
+    return textParts.join("\n\n");
   }
 
   const parts: RelayChatContentPart[] = [];
@@ -268,6 +280,10 @@ export function ChatScreen({ visible = true, onScrollState }: Props) {
   );
   const activeChatModel =
     chatModels.find((model) => model.id === settings.activeChatModelId) ?? chatModels[0] ?? settings.models[0];
+  const chatSupportsImages = useMemo(
+    () => supportsChatImages(activeChatModel?.chatModel ?? settings.chat.model),
+    [activeChatModel?.chatModel, settings.chat.model]
+  );
   const canSend = useMemo(() => (input.trim().length > 0 || attachments.length > 0) && !sending, [attachments.length, input, sending]);
   const reportScrollState = useScrollChromeReporter(onScrollState);
   const timelineItems = useMemo(() => buildTimelineItems(messages), [messages]);
@@ -581,7 +597,9 @@ export function ChatScreen({ visible = true, onScrollState }: Props) {
       const relayMessages = await Promise.all(
         relayConversation.map(async (message) => ({
           role: message.role,
-          content: await convertMessageToContent(message),
+          content: await convertMessageToContent(message, {
+            allowImages: chatSupportsImages,
+          }),
         }))
       );
 
@@ -726,26 +744,30 @@ export function ChatScreen({ visible = true, onScrollState }: Props) {
         return;
       }
 
-      const nextAttachments: ChatAttachment[] = [];
-
-      for (const asset of picked.assets) {
-        const mimeType = asset.mimeType ?? "application/octet-stream";
-        const kind: ChatAttachment["kind"] = mimeType.startsWith("image/") ? "image" : "file";
-        const attachment: ChatAttachment = {
-          id: `file-${now()}-${Math.random().toString(36).slice(2, 8)}`,
-          kind,
+      const nextAttachments = await Promise.all(
+        picked.assets.map(async (asset) => {
+          const mimeType = asset.mimeType ?? "application/octet-stream";
+          const kind: ChatAttachment["kind"] = mimeType.startsWith("image/") ? "image" : "file";
+          const attachment: ChatAttachment = {
+            id: `file-${now()}-${Math.random().toString(36).slice(2, 8)}`,
+            kind,
           uri: asset.uri,
           name: asset.name ?? "未命名文件",
           mimeType,
-          size: asset.size ?? undefined,
-        };
+            size: asset.size ?? undefined,
+          };
 
-        if (kind === "file" && isTextLikeFile(attachment.name, mimeType)) {
-          attachment.text = await readFileText(asset.uri);
-        }
+          if (kind === "file" && canExtractAttachmentText(attachment.name, mimeType)) {
+            attachment.text = await extractAttachmentText({
+            uri: asset.uri,
+            name: attachment.name,
+              mimeType,
+            });
+          }
 
-        nextAttachments.push(attachment);
-      }
+          return attachment;
+        })
+      );
 
       setAttachments((current) => [...current, ...nextAttachments]);
       setImportMenuOpen(false);
@@ -864,17 +886,7 @@ export function ChatScreen({ visible = true, onScrollState }: Props) {
                 }
               }}
             >
-              <View style={styles.modelCard}>
-                <Text style={styles.modelLabel}>聊天模型</Text>
-                <Pressable onPress={() => setModelMenuOpen(true)} style={styles.modelButton}>
-                  <Text style={styles.modelButtonText} numberOfLines={1}>
-                    {currentModelLabel}
-                  </Text>
-                  <Text style={styles.modelButtonChevron}>▾</Text>
-                </Pressable>
-              </View>
-
-              <View style={styles.inputCard}>
+              <View style={styles.composerCard}>
                 {attachments.length ? (
                   <View style={styles.attachmentStrip}>
                     <View style={styles.attachmentHeader}>
@@ -899,36 +911,48 @@ export function ChatScreen({ visible = true, onScrollState }: Props) {
                   </View>
                 ) : null}
 
-                <View style={styles.composerRow}>
+                <TextInput
+                  value={input}
+                  onChangeText={setInput}
+                  onContentSizeChange={(event) => {
+                    const nextHeight = Math.min(112, Math.max(44, event.nativeEvent.contentSize.height));
+                    setInputHeight(nextHeight);
+                  }}
+                  placeholder="输入消息，或添加图片 / 文件"
+                  placeholderTextColor="#8294BA"
+                  style={[styles.input, { height: inputHeight }]}
+                  multiline
+                  scrollEnabled={inputHeight >= 112}
+                  returnKeyType="send"
+                  submitBehavior="submit"
+                  onSubmitEditing={() => void handleSend()}
+                  blurOnSubmit={false}
+                  editable={!sending}
+                />
+
+                <View style={styles.composerActionsRow}>
                   <Pressable onPress={handleAddAttachment} style={styles.attachButton}>
                     <Text style={styles.attachButtonText}>＋</Text>
                   </Pressable>
-                  <TextInput
-                    value={input}
-                    onChangeText={setInput}
-                    onContentSizeChange={(event) => {
-                      const nextHeight = Math.min(112, Math.max(44, event.nativeEvent.contentSize.height));
-                      setInputHeight(nextHeight);
-                    }}
-                    placeholder="输入消息，或添加图片 / 文件"
-                    placeholderTextColor="#8294BA"
-                    style={[styles.input, { height: inputHeight }]}
-                    multiline
-                    scrollEnabled={inputHeight >= 112}
-                    returnKeyType="send"
-                    submitBehavior="submit"
-                    onSubmitEditing={() => void handleSend()}
-                    blurOnSubmit={false}
-                    editable={!sending}
-                  />
-                  <Pressable
-                    onPress={() => void handleSend()}
-                    disabled={!canSend}
-                    style={({ pressed }) => [styles.sendButton, pressed && styles.sendButtonPressed, !canSend && styles.sendButtonDisabled]}
-                  >
-                    <Text style={styles.sendButtonText}>{sending ? "..." : "发送"}</Text>
-                  </Pressable>
+
+                  <View style={styles.composerRightActions}>
+                    <Pressable onPress={() => setModelMenuOpen(true)} style={styles.modelButton}>
+                      <Text style={styles.modelButtonText} numberOfLines={1}>
+                        {currentModelLabel}
+                      </Text>
+                    </Pressable>
+
+                    <Pressable
+                      onPress={() => void handleSend()}
+                      disabled={!canSend}
+                      style={({ pressed }) => [styles.sendButton, pressed && styles.sendButtonPressed, !canSend && styles.sendButtonDisabled]}
+                    >
+                      <Text style={styles.sendButtonText}>{sending ? "..." : "发送"}</Text>
+                    </Pressable>
+                  </View>
                 </View>
+
+                {!chatSupportsImages ? <Text style={styles.modelHint}>当前模型仅支持文本，图片会自动转为文字发送</Text> : null}
               </View>
             </View>
           </View>
@@ -939,7 +963,7 @@ export function ChatScreen({ visible = true, onScrollState }: Props) {
         <Pressable style={styles.modalBackdrop} onPress={() => setImportMenuOpen(false)}>
           <Pressable style={styles.modalCard} onPress={() => null}>
             <Text style={styles.modalTitle}>添加附件</Text>
-            <Text style={styles.modalSubtitle}>选择图片或文件导入到当前对话</Text>
+            <Text style={styles.modalSubtitle}>支持图片、文本、Word、Excel、PPT 和常见文档格式</Text>
             <View style={styles.importActions}>
               <Pressable onPress={() => void handlePickImages()} style={[styles.modalItem, styles.importActionButton]}>
                 <Text style={styles.modalItemText}>图片</Text>
@@ -947,7 +971,7 @@ export function ChatScreen({ visible = true, onScrollState }: Props) {
               </Pressable>
               <Pressable onPress={() => void handlePickFiles()} style={[styles.modalItem, styles.importActionButton]}>
                 <Text style={styles.modalItemText}>文件</Text>
-                <Text style={styles.modalItemSubtext}>导入文档或文本</Text>
+                <Text style={styles.modalItemSubtext}>导入文档、表格或文本</Text>
               </Pressable>
             </View>
             <Pressable onPress={() => setImportMenuOpen(false)} style={styles.importCancelButton}>
@@ -1039,6 +1063,14 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingHorizontal: 8,
   },
+  composerCard: {
+    gap: 10,
+    padding: 10,
+    borderRadius: 24,
+    backgroundColor: "rgba(6, 12, 24, 0.78)",
+    borderWidth: 1,
+    borderColor: "rgba(146, 171, 255, 0.14)",
+  },
   contentLayer: {
     flex: 1,
   },
@@ -1048,22 +1080,6 @@ const styles = StyleSheet.create({
   },
   messageList: {
     flex: 1,
-  },
-  modelCard: {
-    gap: 6,
-    padding: 10,
-    borderRadius: 22,
-    backgroundColor: "rgba(10, 18, 36, 0.88)",
-    borderWidth: 1,
-    borderColor: "rgba(130, 150, 220, 0.18)",
-  },
-  inputCard: {
-    gap: 10,
-    padding: 10,
-    borderRadius: 24,
-    backgroundColor: "rgba(6, 12, 24, 0.78)",
-    borderWidth: 1,
-    borderColor: "rgba(146, 171, 255, 0.14)",
   },
   composer: {
     gap: 10,
@@ -1137,7 +1153,14 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "700",
   },
+  modelHint: {
+    color: "#8FA0C4",
+    fontSize: 11,
+    lineHeight: 16,
+  },
   modelButton: {
+    flexShrink: 1,
+    minWidth: 96,
     minHeight: 42,
     paddingHorizontal: 12,
     borderRadius: 14,
@@ -1154,15 +1177,15 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "800",
   },
-  modelButtonChevron: {
-    color: "#DCE6FF",
-    fontSize: 16,
-    fontWeight: "700",
-    marginLeft: 8,
-  },
-  composerRow: {
+  composerActionsRow: {
     flexDirection: "row",
-    alignItems: "flex-end",
+    alignItems: "center",
+    gap: 8,
+  },
+  composerRightActions: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
     gap: 8,
   },
   attachButton: {
@@ -1194,7 +1217,8 @@ const styles = StyleSheet.create({
     textAlignVertical: "top",
   },
   sendButton: {
-    minWidth: 66,
+    flexShrink: 0,
+    minWidth: 74,
     minHeight: 46,
     borderRadius: 22,
     alignItems: "center",

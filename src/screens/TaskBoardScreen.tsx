@@ -13,6 +13,7 @@ import {
 } from "react-native";
 
 import { PrimaryButton } from "@/components/PrimaryButton";
+import { useScrollChromeReporter, type ScrollChromeState } from "@/hooks/useScrollChromeReporter";
 import {
   cleanupTaskBoard,
   createTaskItem,
@@ -36,7 +37,7 @@ type DraftState = {
 
 type Props = {
   onClose: () => void;
-  onScrollDirection?: (direction: "up" | "down") => void;
+  onScrollState?: (state: ScrollChromeState) => void;
 };
 
 const emptyDraft: DraftState = {
@@ -147,7 +148,7 @@ function TaskCard({
   );
 }
 
-export function TaskBoardScreen({ onScrollDirection }: Props) {
+export function TaskBoardScreen({ onScrollState }: Props) {
   const [items, setItems] = useState<TaskItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -163,7 +164,7 @@ export function TaskBoardScreen({ onScrollDirection }: Props) {
   const [bulkMounted, setBulkMounted] = useState(false);
   const bulkBackdrop = useRef(new Animated.Value(0)).current;
   const bulkSheet = useRef(new Animated.Value(0)).current;
-  const scrollY = useRef(0);
+  const reportScrollState = useScrollChromeReporter(onScrollState);
 
   async function loadData(mode: "initial" | "refresh" | "silent" = "silent") {
     setError("");
@@ -485,12 +486,7 @@ export function TaskBoardScreen({ onScrollDirection }: Props) {
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void loadData("refresh")} />}
         onScroll={(event) => {
-          const y = event.nativeEvent.contentOffset.y;
-          const delta = y - scrollY.current;
-          if (Math.abs(delta) > 12) {
-            onScrollDirection?.(delta > 0 ? "up" : "down");
-          }
-          scrollY.current = y;
+          reportScrollState(event.nativeEvent.contentOffset.y);
         }}
         scrollEventThrottle={16}
       >

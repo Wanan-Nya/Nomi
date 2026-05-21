@@ -1,6 +1,6 @@
 {
   "name": "nomi-mobile",
-  "version": "0.3.7",
+  "version": "0.3.8",
   "private": true,
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
@@ -22,6 +22,7 @@
     "expo-image-picker": "~17.0.11",
     "expo-media-library": "~18.2.1",
     "expo-sqlite": "~16.0.10",
+    "jszip": "^3.10.1",
     "react": "19.1.0",
     "react-native": "0.81.5"
   },

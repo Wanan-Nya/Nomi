@@ -81,18 +81,62 @@ async function requestFormData<T>(config: RelayConnectionSettings, path: string,
   return parseJsonResponse<T>(response, path);
 }
 
-export async function sendChatMessage(config: RelayConnectionSettings, messages: RelayChatRequest["messages"]) {
-  const data = await requestJson<RelayChatResponse>(config, chatEndpoint, {
-    model: config.model,
-    messages,
-  });
+function isUnsupportedMultimodalError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /unknown variant image url/i.test(message) || /expected text/i.test(message) || /invalid_request_error/i.test(message);
+}
 
-  const content = data.choices?.[0]?.message?.content?.trim();
-  if (!content) {
-    throw new Error("The chat endpoint returned no usable content.");
+function contentPartToText(part: RelayChatContentPart) {
+  if (part.type === "text") {
+    return part.text;
   }
 
-  return content;
+  return "[图片]";
+}
+
+function fallbackMessagesToTextOnly(messages: RelayChatRequest["messages"]): RelayChatRequest["messages"] {
+  return messages.map((message) => {
+    if (typeof message.content === "string") {
+      return message;
+    }
+
+    return {
+      ...message,
+      content: message.content.map(contentPartToText).join("\n").trim() || "请结合附件回答。",
+    };
+  });
+}
+
+export async function sendChatMessage(config: RelayConnectionSettings, messages: RelayChatRequest["messages"]) {
+  try {
+    const data = await requestJson<RelayChatResponse>(config, chatEndpoint, {
+      model: config.model,
+      messages,
+    });
+
+    const content = data.choices?.[0]?.message?.content?.trim();
+    if (!content) {
+      throw new Error("The chat endpoint returned no usable content.");
+    }
+
+    return content;
+  } catch (error) {
+    if (!isUnsupportedMultimodalError(error)) {
+      throw error;
+    }
+
+    const fallbackData = await requestJson<RelayChatResponse>(config, chatEndpoint, {
+      model: config.model,
+      messages: fallbackMessagesToTextOnly(messages),
+    });
+
+    const fallbackContent = fallbackData.choices?.[0]?.message?.content?.trim();
+    if (!fallbackContent) {
+      throw new Error("The chat endpoint returned no usable content.");
+    }
+
+    return fallbackContent;
+  }
 }
 
 export async function generateImage(

@@ -3,8 +3,8 @@
     "name": "Nomi",
     "slug": "nomi-mobile",
     "scheme": "nomimobile",
-    "version": "0.3.7",
-    "icon": "./assets/icon.png",
+    "version": "0.3.8",
+    "icon": "./nomi.png",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "plugins": [
@@ -31,11 +31,11 @@
     },
     "android": {
       "package": "com.nomi.mobile",
-      "versionCode": 16,
+      "versionCode": 17,
       "softwareKeyboardLayoutMode": "pan",
       "adaptiveIcon": {
         "backgroundColor": "#081120",
-        "foregroundImage": "./assets/adaptive-icon.png"
+        "foregroundImage": "./nomi.png"
       }
     },
     "androidStatusBar": {

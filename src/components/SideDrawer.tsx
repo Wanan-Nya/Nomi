@@ -10,7 +10,6 @@ type Props = {
   page: Page;
   onClose: () => void;
   onOpenChat: () => void;
-  onOpenImage: () => void;
   onOpenSettings: () => void;
   onOpenMemory: () => void;
   onOpenTasks: () => void;
@@ -24,7 +23,6 @@ export function SideDrawer({
   page,
   onClose,
   onOpenChat,
-  onOpenImage,
   onOpenSettings,
   onOpenMemory,
   onOpenTasks,
@@ -71,7 +69,7 @@ export function SideDrawer({
         onPress: onOpenSettings,
       },
     ],
-    [mode, onOpenChat, onOpenImage, onOpenMemory, onOpenSettings, onOpenTasks, page]
+    [mode, onOpenChat, onOpenMemory, onOpenSettings, onOpenTasks, page]
   );
 
   useEffect(() => {

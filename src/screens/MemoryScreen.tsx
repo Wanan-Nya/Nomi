@@ -13,9 +13,10 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { getContentUriAsync } from "expo-file-system/legacy";
+import { File } from "expo-file-system";
 
 import { PrimaryButton } from "@/components/PrimaryButton";
+import { useScrollChromeReporter, type ScrollChromeState } from "@/hooks/useScrollChromeReporter";
 import {
   clearLongTermMemory,
   cleanupLongTermMemory,
@@ -48,7 +49,7 @@ type Section = {
 
 type Props = {
   onClose: () => void;
-  onScrollDirection?: (direction: "up" | "down") => void;
+  onScrollState?: (state: ScrollChromeState) => void;
 };
 
 const kindOptions: Array<{ value: MemoryKind; label: string }> = [
@@ -233,7 +234,7 @@ const DraftFields = memo(function DraftFields({
   );
 });
 
-export function MemoryScreen({ onClose, onScrollDirection }: Props) {
+export function MemoryScreen({ onClose, onScrollState }: Props) {
   const [items, setItems] = useState<MemoryItem[]>([]);
   const [summary, setSummary] = useState("");
   const [query, setQuery] = useState("");
@@ -256,7 +257,7 @@ export function MemoryScreen({ onClose, onScrollDirection }: Props) {
   const bulkBackdrop = useRef(new Animated.Value(0)).current;
   const bulkSheet = useRef(new Animated.Value(0)).current;
   const deferredQuery = useDeferredValue(query);
-  const scrollY = useRef(0);
+  const reportScrollState = useScrollChromeReporter(onScrollState);
 
   async function loadData(mode: "initial" | "refresh" | "silent" = "silent") {
     setError("");
@@ -720,7 +721,7 @@ export function MemoryScreen({ onClose, onScrollDirection }: Props) {
 
     try {
       const { uri, payload } = await exportLongTermMemoryToFile();
-      const shareUri = Platform.OS === "android" ? await getContentUriAsync(uri) : uri;
+      const shareUri = Platform.OS === "android" ? new File(uri).contentUri : uri;
       await Share.share({
         title: "导出长期记忆",
         message: `长期记忆导出文件，包含 ${payload.stats.total} 条记忆。`,
@@ -774,12 +775,7 @@ export function MemoryScreen({ onClose, onScrollDirection }: Props) {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void loadData("refresh")} tintColor="#FFFFFF" />}
         showsVerticalScrollIndicator={false}
         onScroll={(event) => {
-          const y = event.nativeEvent.contentOffset.y;
-          const delta = y - scrollY.current;
-          if (Math.abs(delta) > 12) {
-            onScrollDirection?.(delta > 0 ? "up" : "down");
-          }
-          scrollY.current = y;
+          reportScrollState(event.nativeEvent.contentOffset.y);
         }}
         scrollEventThrottle={16}
       >

@@ -39,6 +39,7 @@ if (-not $env:ANDROID_HOME -or -not (Test-Path $env:ANDROID_HOME)) {
 $env:GRADLE_USER_HOME = $gradleUserHome
 $env:TEMP = $tempDir
 $env:TMP = $tempDir
+$env:NODE_ENV = "production"
 
 $gradlew = Join-Path $androidRoot "gradlew.bat"
 if (-not (Test-Path $gradlew)) {
@@ -65,7 +66,7 @@ try {
     Select-Object -First 1
 
   if ($apk) {
-    $targetName = "nomi-mobile-0.3.7-release.apk"
+    $targetName = "nomi-mobile-0.3.8-release.apk"
     $targetPath = Join-Path $artifactDir $targetName
     Copy-Item -LiteralPath $apk.FullName -Destination $targetPath -Force
     Write-Host "APK ready: $targetPath"
