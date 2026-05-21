@@ -1,7 +1,9 @@
 import JSZip from "jszip";
 import { File } from "expo-file-system";
+import { extractText, getDocumentProxy } from "unpdf";
+import XLSX from "xlsx";
 
-const MAX_ATTACHMENT_TEXT_LENGTH = 12_000;
+const MAX_ATTACHMENT_TEXT_LENGTH = 24_000;
 
 const TEXT_EXTENSIONS = new Set([
   "txt",
@@ -47,7 +49,25 @@ const TEXT_EXTENSIONS = new Set([
   "rtf",
 ]);
 
-const OFFICE_XML_EXTENSIONS = new Set(["docx", "pptx", "xlsx", "odt", "odp", "ods"]);
+const OFFICE_EXTENSIONS = new Set([
+  "doc",
+  "docx",
+  "dot",
+  "dotx",
+  "xls",
+  "xlsx",
+  "xlt",
+  "xltx",
+  "ppt",
+  "pptx",
+  "pps",
+  "ppsx",
+  "odt",
+  "ods",
+  "odp",
+]);
+
+const PDF_EXTENSIONS = new Set(["pdf"]);
 
 type AttachmentSource = {
   uri: string;
@@ -55,11 +75,15 @@ type AttachmentSource = {
   mimeType: string;
 };
 
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
 function normalizeMimeType(mimeType: string) {
   return mimeType.trim().toLowerCase();
 }
 
-function getFileExtension(name: string) {
+function getExtension(name: string) {
   const match = /\.([^.\\/:]+)$/.exec(name.trim());
   return match?.[1]?.toLowerCase() ?? "";
 }
@@ -72,6 +96,7 @@ function collapseWhitespace(text: string) {
   return normalizeLineEndings(text)
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
     .trim();
 }
 
@@ -95,75 +120,28 @@ function truncateText(text: string) {
   return `${normalized.slice(0, MAX_ATTACHMENT_TEXT_LENGTH)}\n\n[内容已截断，原文过长]`;
 }
 
-function extractTextNodeContent(xml: string) {
-  return decodeXmlEntities(
-    normalizeLineEndings(xml)
-      .replace(/<\?xml[\s\S]*?\?>/g, " ")
-      .replace(/<\/(w:p|w:tr|a:p|text:p|text:h|text:list-item|div|p|tr)>/gi, "\n")
-      .replace(/<w:tab\s*\/>/gi, "\t")
-      .replace(/<w:br\s*\/>/gi, "\n")
-      .replace(/<w:cr\s*\/>/gi, "\n")
-      .replace(/<a:br\s*\/>/gi, "\n")
-      .replace(/<text:line-break\s*\/>/gi, "\n")
-      .replace(/<text:tab\s*\/>/gi, "\t")
-      .replace(/<[^>]+>/g, " ")
-  );
-}
-
-function stripHtmlToText(html: string) {
-  return collapseWhitespace(
-    normalizeLineEndings(html)
-      .replace(/<script[\s\S]*?<\/script>/gi, " ")
-      .replace(/<style[\s\S]*?<\/style>/gi, " ")
-      .replace(/<br\s*\/?>/gi, "\n")
-      .replace(/<\/(p|div|li|tr|table|section|article|header|footer|h[1-6])>/gi, "\n")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/\s+/g, " ")
-  );
-}
-
-function stripRtfToText(rtf: string) {
-  let text = normalizeLineEndings(rtf);
-  text = text.replace(/\{\\\*?[\s\S]*?\}/g, " ");
-  text = text.replace(/\\par[d]?/gi, "\n");
-  text = text.replace(/\\tab/gi, "\t");
-  text = text.replace(/\\'[0-9a-fA-F]{2}/g, (match) => String.fromCharCode(Number.parseInt(match.slice(2), 16)));
-  text = text.replace(/\\[a-zA-Z]+\d* ?/g, " ");
-  text = text.replace(/[{}]/g, " ");
-  return collapseWhitespace(decodeXmlEntities(text));
-}
-
-function isTextLikeFile(name: string, mimeType: string) {
-  const ext = getFileExtension(name);
-  const mime = normalizeMimeType(mimeType);
-
-  if (mime.startsWith("text/")) {
-    return true;
+function base64ToUint8Array(base64: string) {
+  const trimmed = base64.trim();
+  if (!trimmed) {
+    return new Uint8Array();
   }
 
-  if (mime === "application/json" || mime === "application/xml" || mime === "application/xhtml+xml") {
-    return true;
+  if (typeof globalThis.atob === "function") {
+    const binary = globalThis.atob(trimmed);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes;
   }
 
-  return TEXT_EXTENSIONS.has(ext);
-}
-
-function isOfficeXmlFile(name: string, mimeType: string) {
-  const ext = getFileExtension(name);
-  const mime = normalizeMimeType(mimeType);
-
-  if (OFFICE_XML_EXTENSIONS.has(ext)) {
-    return true;
+  const buffer = (globalThis as { Buffer?: { from: (value: string, encoding: string) => ArrayBufferView } }).Buffer;
+  if (buffer?.from) {
+    const nodeBuffer = buffer.from(trimmed, "base64");
+    return new Uint8Array(nodeBuffer.buffer, nodeBuffer.byteOffset, nodeBuffer.byteLength);
   }
 
-  return (
-    mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-    mime === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
-    mime === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
-    mime === "application/vnd.oasis.opendocument.text" ||
-    mime === "application/vnd.oasis.opendocument.presentation" ||
-    mime === "application/vnd.oasis.opendocument.spreadsheet"
-  );
+  throw new Error("无法解码附件内容。");
 }
 
 async function readFileText(uri: string) {
@@ -182,157 +160,271 @@ async function readFileBase64(uri: string) {
   }
 }
 
-function getZipEntryNames(zip: JSZip, patterns: RegExp[]) {
-  return Object.keys(zip.files)
-    .filter((name) => patterns.some((pattern) => pattern.test(name)))
-    .sort((a, b) => a.localeCompare(b));
+function stripHtmlToText(html: string) {
+  return collapseWhitespace(
+    normalizeLineEndings(html)
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/(p|div|li|tr|table|section|article|header|footer|h[1-6])>/gi, "\n")
+      .replace(/<[^>]+>/g, " ")
+  );
 }
 
-function extractSharedStrings(xml: string) {
-  const sharedStrings: string[] = [];
-  const matchPattern = /<si\b[\s\S]*?<\/si>/gi;
-  for (const match of xml.match(matchPattern) ?? []) {
-    const value = truncateText(extractTextNodeContent(match));
-    if (value) {
-      sharedStrings.push(value);
-    }
-  }
-  return sharedStrings;
+function stripRtfToText(rtf: string) {
+  let text = normalizeLineEndings(rtf);
+  text = text.replace(/\{\\\*?[\s\S]*?\}/g, " ");
+  text = text.replace(/\\par[d]?/gi, "\n");
+  text = text.replace(/\\tab/gi, "\t");
+  text = text.replace(/\\'[0-9a-fA-F]{2}/g, (match) => String.fromCharCode(Number.parseInt(match.slice(2), 16)));
+  text = text.replace(/\\[a-zA-Z]+\d* ?/g, " ");
+  text = text.replace(/[{}]/g, " ");
+  return collapseWhitespace(decodeXmlEntities(text));
 }
 
-function extractSpreadsheetText(xml: string, sharedStrings: string[]) {
-  const rows: string[] = [];
-  const rowPattern = /<row\b[\s\S]*?<\/row>/gi;
-  const cellPattern = /<c\b([^>]*)>([\s\S]*?)<\/c>/gi;
+function isTextLikeFile(name: string, mimeType: string) {
+  const ext = getExtension(name);
+  const mime = normalizeMimeType(mimeType);
 
-  for (const row of xml.match(rowPattern) ?? []) {
-    const cells: string[] = [];
-    cellPattern.lastIndex = 0;
-
-    let cellMatch: RegExpExecArray | null;
-    while ((cellMatch = cellPattern.exec(row))) {
-      const attrs = cellMatch[1];
-      const body = cellMatch[2];
-      const typeMatch = /\bt="([^"]+)"/i.exec(attrs);
-      const cellType = typeMatch?.[1] ?? "";
-      let value = "";
-
-      if (cellType === "s") {
-        const sharedIndexMatch = /<v>\s*([^<]+)\s*<\/v>/i.exec(body);
-        const sharedIndex = sharedIndexMatch ? Number.parseInt(sharedIndexMatch[1], 10) : Number.NaN;
-        value = Number.isFinite(sharedIndex) ? sharedStrings[sharedIndex] ?? "" : "";
-      } else if (cellType === "inlineStr") {
-        const inlineMatch = /<is\b[\s\S]*?<\/is>/i.exec(body);
-        value = inlineMatch ? extractTextNodeContent(inlineMatch[0]) : "";
-      } else if (cellType === "b") {
-        value = /<v>\s*1\s*<\/v>/i.test(body) ? "TRUE" : "FALSE";
-      } else {
-        const rawValueMatch = /<v>\s*([\s\S]*?)\s*<\/v>/i.exec(body) ?? /<t\b[^>]*>([\s\S]*?)<\/t>/i.exec(body);
-        value = rawValueMatch ? decodeXmlEntities(rawValueMatch[1]) : "";
-      }
-
-      const trimmed = truncateText(value);
-      if (trimmed) {
-        cells.push(trimmed);
-      }
-    }
-
-    if (cells.length) {
-      rows.push(cells.join("\t"));
-    }
+  if (mime.startsWith("text/")) {
+    return true;
   }
 
-  return truncateText(rows.join("\n"));
+  if (mime === "application/json" || mime === "application/xml" || mime === "application/xhtml+xml" || mime === "application/rtf") {
+    return true;
+  }
+
+  return TEXT_EXTENSIONS.has(ext);
 }
 
-async function extractXmlFilesFromZip(zip: JSZip, patterns: RegExp[]) {
-  const fileNames = getZipEntryNames(zip, patterns);
+function isPdfFile(name: string, mimeType: string) {
+  const ext = getExtension(name);
+  const mime = normalizeMimeType(mimeType);
+  return PDF_EXTENSIONS.has(ext) || mime === "application/pdf";
+}
+
+function isOfficeFile(name: string, mimeType: string) {
+  const ext = getExtension(name);
+  const mime = normalizeMimeType(mimeType);
+  if (OFFICE_EXTENSIONS.has(ext)) {
+    return true;
+  }
+
+  return (
+    mime === "application/msword" ||
+    mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    mime === "application/vnd.ms-excel" ||
+    mime === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+    mime === "application/vnd.ms-powerpoint" ||
+    mime === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
+    mime === "application/vnd.oasis.opendocument.text" ||
+    mime === "application/vnd.oasis.opendocument.spreadsheet" ||
+    mime === "application/vnd.oasis.opendocument.presentation"
+  );
+}
+
+function isZipLikeOfficeFile(name: string, mimeType: string) {
+  const ext = getExtension(name);
+  const mime = normalizeMimeType(mimeType);
+  return ext === "zip" || mime === "application/zip" || mime === "application/x-zip-compressed";
+}
+
+async function extractPdfText(bytes: Uint8Array) {
+  const pdf = await getDocumentProxy(bytes);
+  const data = await extractText(pdf, {
+    mergePages: true,
+  });
+
+  return truncateText(String(data?.text ?? ""));
+}
+
+function normalizeSheetText(rows: unknown[][]) {
+  const lines = rows
+    .map((row) =>
+      row
+        .map((cell) => {
+          if (cell === null || cell === undefined) {
+            return "";
+          }
+
+          return collapseWhitespace(String(cell));
+        })
+        .join("\t")
+        .trim()
+    )
+    .filter(Boolean);
+
+  return truncateText(lines.join("\n"));
+}
+
+async function extractSpreadsheetText(bytes: Uint8Array) {
+  const workbook = XLSX.read(bytes, { type: "array" });
   const chunks: string[] = [];
 
-  for (const fileName of fileNames) {
-    const file = zip.file(fileName);
-    if (!file) {
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName];
+    if (!sheet) {
       continue;
     }
 
-    const xml = await file.async("string");
-    const text = truncateText(extractTextNodeContent(xml));
-    if (text) {
-      chunks.push(text);
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+      header: 1,
+      raw: false,
+      defval: "",
+    });
+
+    const sheetText = normalizeSheetText(rows);
+    if (sheetText) {
+      chunks.push(`[${sheetName}]\n${sheetText}`);
     }
   }
 
   return truncateText(chunks.join("\n\n"));
 }
 
-async function extractOfficeText(uri: string, name: string, mimeType: string) {
-  const base64 = await readFileBase64(uri);
-  if (!base64) {
-    return "";
-  }
+function extractTextFromXml(xml: string) {
+  return decodeXmlEntities(
+    normalizeLineEndings(xml)
+      .replace(/<\?xml[\s\S]*?\?>/g, " ")
+      .replace(/<\/(w:p|w:tr|a:p|text:p|text:h|text:list-item|table:table-row|table:table-cell|p|tr|li|div)>/gi, "\n")
+      .replace(/<w:tab\s*\/>/gi, "\t")
+      .replace(/<w:br\s*\/>/gi, "\n")
+      .replace(/<a:br\s*\/>/gi, "\n")
+      .replace(/<text:line-break\s*\/>/gi, "\n")
+      .replace(/<text:tab\s*\/>/gi, "\t")
+      .replace(/<[^>]+>/g, " ")
+  );
+}
 
-  const zip = await JSZip.loadAsync(base64, { base64: true });
-  const ext = getFileExtension(name);
-  const normalizedMime = normalizeMimeType(mimeType);
+function getZipEntryNames(zip: JSZip, patterns: RegExp[]) {
+  return Object.keys(zip.files)
+    .filter((name) => patterns.some((pattern) => pattern.test(name)))
+    .sort((a, b) => a.localeCompare(b));
+}
 
-  if (ext === "xlsx" || normalizedMime === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" || ext === "ods") {
-    const sharedStringsFile =
-      zip.file("xl/sharedStrings.xml") ??
-      zip.file("content.xml");
-    const sharedStrings = sharedStringsFile ? extractSharedStrings(await sharedStringsFile.async("string")) : [];
-    const sheetFiles = getZipEntryNames(zip, [/^xl\/worksheets\/sheet\d+\.xml$/i, /^content\.xml$/i]);
-    const sheetChunks: string[] = [];
+function extractPrintableStrings(bytes: Uint8Array) {
+  const utf8 = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  const asciiChunks = utf8.match(/[A-Za-z0-9\u4e00-\u9fff\u3000-\u303f\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af][A-Za-z0-9\u4e00-\u9fff\u3000-\u303f\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af ,.;:!?'"()\-_/+=@#&%$]{3,}/g) ?? [];
 
-    for (const fileName of sheetFiles) {
-      const file = zip.file(fileName);
-      if (!file) {
-        continue;
-      }
-
-      const xml = await file.async("string");
-      if (fileName.toLowerCase().endsWith("content.xml")) {
-        const text = truncateText(extractTextNodeContent(xml));
-        if (text) {
-          sheetChunks.push(text);
-        }
-        continue;
-      }
-
-      const text = extractSpreadsheetText(xml, sharedStrings);
-      if (text) {
-        sheetChunks.push(text);
-      }
+  const utf16leText = (() => {
+    try {
+      return new TextDecoder("utf-16le", { fatal: false }).decode(new Uint8Array(bytes));
+    } catch {
+      return "";
     }
+  })();
+  const utf16Chunks = utf16leText.match(/[A-Za-z0-9\u4e00-\u9fff\u3000-\u303f\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af][A-Za-z0-9\u4e00-\u9fff\u3000-\u303f\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af ,.;:!?'"()\-_/+=@#&%$]{3,}/g) ?? [];
 
-    return truncateText(sheetChunks.join("\n\n"));
-  }
+  return truncateText([...asciiChunks, ...utf16Chunks].join("\n"));
+}
 
-  if (ext === "pptx" || normalizedMime === "application/vnd.openxmlformats-officedocument.presentationml.presentation" || ext === "odp") {
-    return extractXmlFilesFromZip(zip, [/^ppt\/slides\/slide\d+\.xml$/i, /^ppt\/notesSlides\/notesSlide\d+\.xml$/i, /^content\.xml$/i]);
-  }
+async function extractZipFallback(bytes: Uint8Array, name: string, mimeType: string) {
+  try {
+    const zip = await JSZip.loadAsync(bytes);
+    const ext = getExtension(name);
+    const mime = normalizeMimeType(mimeType);
+    const chunks: string[] = [];
 
-  if (ext === "docx" || normalizedMime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || ext === "odt") {
-    return extractXmlFilesFromZip(zip, [
+    const officeXmlFiles = getZipEntryNames(zip, [
       /^word\/document\.xml$/i,
       /^word\/header\d+\.xml$/i,
       /^word\/footer\d+\.xml$/i,
       /^word\/footnotes\.xml$/i,
       /^word\/endnotes\.xml$/i,
       /^word\/comments\.xml$/i,
+      /^ppt\/slides\/slide\d+\.xml$/i,
+      /^ppt\/notesSlides\/notesSlide\d+\.xml$/i,
+      /^xl\/worksheets\/sheet\d+\.xml$/i,
+      /^xl\/sharedStrings\.xml$/i,
       /^content\.xml$/i,
     ]);
-  }
 
-  return "";
+    const sharedStringsFile = zip.file("xl/sharedStrings.xml");
+    let sharedStrings: string[] = [];
+    if (sharedStringsFile) {
+      const sharedStringsXml = await sharedStringsFile.async("string");
+      sharedStrings = Array.from(sharedStringsXml.matchAll(/<si\b[\s\S]*?<\/si>/gi)).map((match) => truncateText(extractTextFromXml(match[0])));
+    }
+
+    for (const fileName of officeXmlFiles) {
+      const file = zip.file(fileName);
+      if (!file) {
+        continue;
+      }
+
+      const xml = await file.async("string");
+
+      if (/^xl\/worksheets\/sheet\d+\.xml$/i.test(fileName)) {
+        const rows = Array.from(xml.matchAll(/<row\b[\s\S]*?<\/row>/gi));
+        const rowTexts: string[] = [];
+
+        for (const row of rows) {
+          const cellTexts: string[] = [];
+          const cells = Array.from(row[0].matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/gi));
+
+          for (const cell of cells) {
+            const attrs = cell[1];
+            const body = cell[2];
+            const typeMatch = /\bt="([^"]+)"/i.exec(attrs);
+            const cellType = typeMatch?.[1] ?? "";
+            let value = "";
+
+            if (cellType === "s") {
+              const sharedIndexMatch = /<v>\s*([^<]+)\s*<\/v>/i.exec(body);
+              const sharedIndex = sharedIndexMatch ? Number.parseInt(sharedIndexMatch[1], 10) : Number.NaN;
+              value = Number.isFinite(sharedIndex) ? sharedStrings[sharedIndex] ?? "" : "";
+            } else if (cellType === "inlineStr") {
+              const inlineMatch = /<is\b[\s\S]*?<\/is>/i.exec(body);
+              value = inlineMatch ? extractTextFromXml(inlineMatch[0]) : "";
+            } else {
+              const rawValueMatch = /<v>\s*([\s\S]*?)\s*<\/v>/i.exec(body) ?? /<t\b[^>]*>([\s\S]*?)<\/t>/i.exec(body);
+              value = rawValueMatch ? decodeXmlEntities(rawValueMatch[1]) : "";
+            }
+
+            const normalized = truncateText(value);
+            if (normalized) {
+              cellTexts.push(normalized);
+            }
+          }
+
+          if (cellTexts.length) {
+            rowTexts.push(cellTexts.join("\t"));
+          }
+        }
+
+        if (rowTexts.length) {
+          chunks.push(`[${fileName.replace(/^.*\/([^/]+)\.xml$/i, "$1")}]\n${rowTexts.join("\n")}`);
+        }
+        continue;
+      }
+
+      const text = truncateText(extractTextFromXml(xml));
+      if (text) {
+        chunks.push(text);
+      }
+    }
+
+    if (chunks.length) {
+      return truncateText(chunks.join("\n\n"));
+    }
+
+    if (isZipLikeOfficeFile(name, mime)) {
+      return extractPrintableStrings(bytes);
+    }
+
+    return "";
+  } catch {
+    return "";
+  }
 }
 
 export function canExtractAttachmentText(name: string, mimeType: string) {
-  return isTextLikeFile(name, mimeType) || isOfficeXmlFile(name, mimeType);
+  return isTextLikeFile(name, mimeType) || isPdfFile(name, mimeType) || isOfficeFile(name, mimeType) || isZipLikeOfficeFile(name, mimeType);
 }
 
 export async function extractAttachmentText(source: AttachmentSource) {
   const normalizedMime = normalizeMimeType(source.mimeType);
-  const ext = getFileExtension(source.name);
+  const ext = getExtension(source.name);
 
   try {
     if (isTextLikeFile(source.name, source.mimeType)) {
@@ -341,7 +433,7 @@ export async function extractAttachmentText(source: AttachmentSource) {
         return "";
       }
 
-      if (ext === "html" || ext === "htm") {
+      if (ext === "html" || ext === "htm" || normalizedMime === "application/xhtml+xml") {
         return truncateText(stripHtmlToText(rawText));
       }
 
@@ -352,11 +444,43 @@ export async function extractAttachmentText(source: AttachmentSource) {
       return truncateText(rawText);
     }
 
-    if (isOfficeXmlFile(source.name, source.mimeType)) {
-      return await extractOfficeText(source.uri, source.name, source.mimeType);
+    const base64 = await readFileBase64(source.uri);
+    if (!base64) {
+      return "";
     }
 
-    return "";
+    const bytes = base64ToUint8Array(base64);
+
+    if (isPdfFile(source.name, source.mimeType)) {
+      return extractPdfText(bytes);
+    }
+
+    if (ext === "xls" || ext === "xlsx" || ext === "xlt" || ext === "xltx" || ext === "ods" || normalizedMime === "application/vnd.ms-excel" || normalizedMime === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") {
+      try {
+        const spreadsheet = await extractSpreadsheetText(bytes);
+        if (spreadsheet) {
+          return spreadsheet;
+        }
+      } catch {
+        // Fall through to office parser / zip fallback.
+      }
+    }
+
+    if (isOfficeFile(source.name, source.mimeType)) {
+      const zipFallback = await extractZipFallback(bytes, source.name, source.mimeType);
+      if (zipFallback) {
+        return zipFallback;
+      }
+    }
+
+    if (isZipLikeOfficeFile(source.name, source.mimeType)) {
+      const zipFallback = await extractZipFallback(bytes, source.name, source.mimeType);
+      if (zipFallback) {
+        return zipFallback;
+      }
+    }
+
+    return extractPrintableStrings(bytes);
   } catch {
     return "";
   }

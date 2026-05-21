@@ -19,6 +19,7 @@ import { File } from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
 
 import { ChatBubble } from "@/components/ChatBubble";
+import { ThemeSlider } from "@/components/ThemeSlider";
 import { useRelaySettings } from "@/context/RelaySettingsContext";
 import { useScrollChromeReporter, type ScrollChromeState } from "@/hooks/useScrollChromeReporter";
 import { canExtractAttachmentText, extractAttachmentText } from "@/services/attachmentText";
@@ -250,7 +251,13 @@ async function convertMessageToContent(
 }
 
 export function ChatScreen({ visible = true, onScrollState }: Props) {
-  const { settings, setActiveChatModelId } = useRelaySettings();
+  const {
+    settings,
+    setActiveChatModelId,
+    setChatComposerBottomOffsetPx,
+    setChatComposerHeightPx,
+    setChatComposerWidthPct,
+  } = useRelaySettings();
   const [input, setInput] = useState("");
   const [inputHeight, setInputHeight] = useState(44);
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
@@ -263,6 +270,7 @@ export function ChatScreen({ visible = true, onScrollState }: Props) {
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [importMenuOpen, setImportMenuOpen] = useState(false);
+  const [chatSettingsOpen, setChatSettingsOpen] = useState(false);
   const [touching, setTouching] = useState(false);
   const [showToolbar, setShowToolbar] = useState(false);
   const [toolbarMounted, setToolbarMounted] = useState(false);
@@ -780,6 +788,12 @@ export function ChatScreen({ visible = true, onScrollState }: Props) {
     setImportMenuOpen(true);
   }
 
+  function handleResetChatLayout() {
+    setChatComposerWidthPct(100);
+    setChatComposerHeightPx(220);
+    setChatComposerBottomOffsetPx(0);
+  }
+
   function removeAttachment(id: string) {
     setAttachments((current) => current.filter((item) => item.id !== id));
   }
@@ -878,7 +892,7 @@ export function ChatScreen({ visible = true, onScrollState }: Props) {
             ) : null}
 
             <View
-              style={styles.composerStack}
+              style={[styles.composerStack, { marginBottom: settings.chatComposerBottomOffsetPx }]}
               onLayout={(event) => {
                 const nextHeight = Math.ceil(event.nativeEvent.layout.height);
                 if (nextHeight > 0 && nextHeight !== composerHeight) {
@@ -886,7 +900,16 @@ export function ChatScreen({ visible = true, onScrollState }: Props) {
                 }
               }}
             >
-              <View style={styles.composerCard}>
+              <View
+                style={[
+                  styles.composerCard,
+                  {
+                    width: `${settings.chatComposerWidthPct}%`,
+                    minHeight: settings.chatComposerHeightPx,
+                    alignSelf: settings.chatComposerWidthPct < 100 ? "center" : "stretch",
+                  },
+                ]}
+              >
                 {attachments.length ? (
                   <View style={styles.attachmentStrip}>
                     <View style={styles.attachmentHeader}>
@@ -931,9 +954,15 @@ export function ChatScreen({ visible = true, onScrollState }: Props) {
                 />
 
                 <View style={styles.composerActionsRow}>
-                  <Pressable onPress={handleAddAttachment} style={styles.attachButton}>
-                    <Text style={styles.attachButtonText}>＋</Text>
-                  </Pressable>
+                  <View style={styles.composerLeftActions}>
+                    <Pressable onPress={handleAddAttachment} style={styles.attachButton}>
+                      <Text style={styles.attachButtonText}>＋</Text>
+                    </Pressable>
+
+                    <Pressable onPress={() => setChatSettingsOpen(true)} style={styles.attachButton}>
+                      <Text style={styles.attachButtonText}>设</Text>
+                    </Pressable>
+                  </View>
 
                   <View style={styles.composerRightActions}>
                     <Pressable onPress={() => setModelMenuOpen(true)} style={styles.modelButton}>
@@ -963,7 +992,7 @@ export function ChatScreen({ visible = true, onScrollState }: Props) {
         <Pressable style={styles.modalBackdrop} onPress={() => setImportMenuOpen(false)}>
           <Pressable style={styles.modalCard} onPress={() => null}>
             <Text style={styles.modalTitle}>添加附件</Text>
-            <Text style={styles.modalSubtitle}>支持图片、文本、Word、Excel、PPT 和常见文档格式</Text>
+            <Text style={styles.modalSubtitle}>支持图片、文本、PDF、Word、Excel、PPT 和常见文档格式</Text>
             <View style={styles.importActions}>
               <Pressable onPress={() => void handlePickImages()} style={[styles.modalItem, styles.importActionButton]}>
                 <Text style={styles.modalItemText}>图片</Text>
@@ -977,6 +1006,52 @@ export function ChatScreen({ visible = true, onScrollState }: Props) {
             <Pressable onPress={() => setImportMenuOpen(false)} style={styles.importCancelButton}>
               <Text style={styles.importCancelText}>取消</Text>
             </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal visible={chatSettingsOpen} transparent animationType="fade" onRequestClose={() => setChatSettingsOpen(false)}>
+        <Pressable style={styles.modalBackdrop} onPress={() => setChatSettingsOpen(false)}>
+          <Pressable style={styles.modalCard} onPress={() => null}>
+            <Text style={styles.modalTitle}>聊天框设置</Text>
+            <Text style={styles.modalSubtitle}>调整输入区宽度、高度和底部间距</Text>
+            <View style={styles.sliderGroup}>
+              <ThemeSlider
+                label="宽度"
+                value={settings.chatComposerWidthPct}
+                min={80}
+                max={100}
+                step={1}
+                unit="%"
+                onChange={setChatComposerWidthPct}
+              />
+              <ThemeSlider
+                label="高度"
+                value={settings.chatComposerHeightPx}
+                min={140}
+                max={320}
+                step={4}
+                unit="px"
+                onChange={setChatComposerHeightPx}
+              />
+              <ThemeSlider
+                label="底部距离"
+                value={settings.chatComposerBottomOffsetPx}
+                min={0}
+                max={48}
+                step={1}
+                unit="px"
+                onChange={setChatComposerBottomOffsetPx}
+              />
+            </View>
+            <View style={styles.settingsActions}>
+              <Pressable onPress={handleResetChatLayout} style={styles.settingsSecondaryButton}>
+                <Text style={styles.settingsSecondaryText}>恢复默认</Text>
+              </Pressable>
+              <Pressable onPress={() => setChatSettingsOpen(false)} style={styles.settingsPrimaryButton}>
+                <Text style={styles.settingsPrimaryText}>完成</Text>
+              </Pressable>
+            </View>
           </Pressable>
         </Pressable>
       </Modal>
@@ -1180,12 +1255,19 @@ const styles = StyleSheet.create({
   composerActionsRow: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  composerLeftActions: {
+    flexDirection: "row",
+    alignItems: "center",
     gap: 8,
   },
   composerRightActions: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "flex-end",
     gap: 8,
   },
   attachButton: {
@@ -1322,6 +1404,42 @@ const styles = StyleSheet.create({
     borderColor: "rgba(146,171,255,0.12)",
   },
   importCancelText: {
+    color: "#F7FAFF",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  sliderGroup: {
+    gap: 14,
+    marginBottom: 14,
+  },
+  settingsActions: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  settingsPrimaryButton: {
+    flex: 1,
+    minHeight: 42,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#5E85FF",
+  },
+  settingsPrimaryText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  settingsSecondaryButton: {
+    flex: 1,
+    minHeight: 42,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(146,171,255,0.12)",
+  },
+  settingsSecondaryText: {
     color: "#F7FAFF",
     fontSize: 13,
     fontWeight: "800",

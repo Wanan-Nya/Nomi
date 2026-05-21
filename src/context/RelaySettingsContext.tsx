@@ -27,6 +27,9 @@ export type RelaySettings = {
   chatBackgroundUri: string;
   userAvatarUri: string;
   aiAvatarUri: string;
+  chatComposerWidthPct: number;
+  chatComposerHeightPx: number;
+  chatComposerBottomOffsetPx: number;
 };
 
 type RelaySettingsContextValue = {
@@ -48,12 +51,19 @@ type RelaySettingsContextValue = {
   setChatBackgroundUri: (value: string) => void;
   setUserAvatarUri: (value: string) => void;
   setAiAvatarUri: (value: string) => void;
+  setChatComposerWidthPct: (value: number) => void;
+  setChatComposerHeightPx: (value: number) => void;
+  setChatComposerBottomOffsetPx: (value: number) => void;
 };
 
-const STORAGE_KEY = "@nomi-mobile/relay-settings-v3";
+const STORAGE_KEY = "@nomi-mobile/relay-settings-v4";
 
 function trim(value?: string | null) {
   return value?.trim() ?? "";
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function makeId(prefix: string) {
@@ -103,6 +113,9 @@ function createDefaultSettings(): RelaySettings {
     chatBackgroundUri: "",
     userAvatarUri: "",
     aiAvatarUri: "",
+    chatComposerWidthPct: 100,
+    chatComposerHeightPx: 220,
+    chatComposerBottomOffsetPx: 0,
   };
 }
 
@@ -204,6 +217,9 @@ function normalizeSettings(partial?: Partial<RelaySettings> | null): RelaySettin
     chatBackgroundUri: trim(partial.chatBackgroundUri),
     userAvatarUri: trim(partial.userAvatarUri),
     aiAvatarUri: trim(partial.aiAvatarUri),
+    chatComposerWidthPct: clamp(Number(partial.chatComposerWidthPct ?? defaultSettings.chatComposerWidthPct), 80, 100),
+    chatComposerHeightPx: clamp(Number(partial.chatComposerHeightPx ?? defaultSettings.chatComposerHeightPx), 140, 320),
+    chatComposerBottomOffsetPx: clamp(Number(partial.chatComposerBottomOffsetPx ?? defaultSettings.chatComposerBottomOffsetPx), 0, 48),
   };
 }
 
@@ -410,6 +426,18 @@ export function RelaySettingsProvider({ children }: { children: React.ReactNode 
     commit((current) => ({ ...current, aiAvatarUri: trim(value) }));
   }, [commit]);
 
+  const setChatComposerWidthPct = useCallback((value: number) => {
+    commit((current) => ({ ...current, chatComposerWidthPct: clamp(Math.round(value), 80, 100) }));
+  }, [commit]);
+
+  const setChatComposerHeightPx = useCallback((value: number) => {
+    commit((current) => ({ ...current, chatComposerHeightPx: clamp(Math.round(value), 140, 320) }));
+  }, [commit]);
+
+  const setChatComposerBottomOffsetPx = useCallback((value: number) => {
+    commit((current) => ({ ...current, chatComposerBottomOffsetPx: clamp(Math.round(value), 0, 48) }));
+  }, [commit]);
+
   const setChatBaseUrl = useCallback((value: string) => updateActiveChatCard({ baseUrl: value }), [updateActiveChatCard]);
   const setChatApiKey = useCallback((value: string) => updateActiveChatCard({ apiKey: value }), [updateActiveChatCard]);
   const setChatModel = useCallback((value: string) => updateActiveChatCard({ chatModel: value }), [updateActiveChatCard]);
@@ -447,6 +475,9 @@ export function RelaySettingsProvider({ children }: { children: React.ReactNode 
       setChatBackgroundUri,
       setUserAvatarUri,
       setAiAvatarUri,
+      setChatComposerWidthPct,
+      setChatComposerHeightPx,
+      setChatComposerBottomOffsetPx,
     }),
     [
       addModelCard,
@@ -460,6 +491,9 @@ export function RelaySettingsProvider({ children }: { children: React.ReactNode 
       setChatBackgroundUri,
       setChatBaseUrl,
       setChatModel,
+      setChatComposerBottomOffsetPx,
+      setChatComposerHeightPx,
+      setChatComposerWidthPct,
       setImageApiKey,
       setImageBaseUrl,
       setImageModel,
